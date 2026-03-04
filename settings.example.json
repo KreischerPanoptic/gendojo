@@ -1,0 +1,14 @@
+{
+  "paths": {
+    "models": "/workspace/models",
+    "datasets": "/workspace/datasets",
+    "outputs": "/workspace/outputs",
+    "logs": "/workspace/logs",
+    "sdScripts": "/workspace/sd-scripts"
+  },
+  "training": {
+    "maxConcurrentJobs": 1,
+    "logBufferSize": 2000,
+    "cpuThreadsPerProcess": 2
+  }
+}
