@@ -1,3 +1,4 @@
+import EditDatasetPage from '@pages/datasets/ready/EditDatasetPage';
 import { createFileRoute } from '@tanstack/react-router'
 
 export const Route = createFileRoute('/_authenticated/datasets/edit/$datasetName')({
@@ -6,8 +7,6 @@ export const Route = createFileRoute('/_authenticated/datasets/edit/$datasetName
 
 function RouteComponent() {
   return (
-    <>
-      
-    </>
+    <EditDatasetPage/>
   );
 }

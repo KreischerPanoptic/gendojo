@@ -20,7 +20,8 @@ import { Route as AuthenticatedDatasetsIndexRouteImport } from './routes/_authen
 import { Route as AuthenticatedJobsOverviewRouteImport } from './routes/_authenticated/jobs/overview'
 import { Route as AuthenticatedJobsNewRouteImport } from './routes/_authenticated/jobs/new'
 import { Route as AuthenticatedDatasetsUploadRouteImport } from './routes/_authenticated/datasets/upload'
-import { Route as AuthenticatedDatasetsEditDatasetNameRouteImport } from './routes/_authenticated/datasets/edit.$datasetName'
+import { Route as AuthenticatedDatasetsViewDatasetNameRouteImport } from './routes/_authenticated/datasets/view/$datasetName'
+import { Route as AuthenticatedDatasetsEditDatasetNameRouteImport } from './routes/_authenticated/datasets/edit/$datasetName'
 
 const AuthenticatedRoute = AuthenticatedRouteImport.update({
   id: '/_authenticated',
@@ -80,6 +81,12 @@ const AuthenticatedDatasetsUploadRoute =
     path: '/datasets/upload',
     getParentRoute: () => AuthenticatedRoute,
   } as any)
+const AuthenticatedDatasetsViewDatasetNameRoute =
+  AuthenticatedDatasetsViewDatasetNameRouteImport.update({
+    id: '/datasets/view/$datasetName',
+    path: '/datasets/view/$datasetName',
+    getParentRoute: () => AuthenticatedRoute,
+  } as any)
 const AuthenticatedDatasetsEditDatasetNameRoute =
   AuthenticatedDatasetsEditDatasetNameRouteImport.update({
     id: '/datasets/edit/$datasetName',
@@ -98,6 +105,7 @@ export interface FileRoutesByFullPath {
   '/models/': typeof AuthenticatedModelsIndexRoute
   '/settings/': typeof AuthenticatedSettingsIndexRoute
   '/datasets/edit/$datasetName': typeof AuthenticatedDatasetsEditDatasetNameRoute
+  '/datasets/view/$datasetName': typeof AuthenticatedDatasetsViewDatasetNameRoute
 }
 export interface FileRoutesByTo {
   '/': typeof AuthenticatedIndexRoute
@@ -110,6 +118,7 @@ export interface FileRoutesByTo {
   '/models': typeof AuthenticatedModelsIndexRoute
   '/settings': typeof AuthenticatedSettingsIndexRoute
   '/datasets/edit/$datasetName': typeof AuthenticatedDatasetsEditDatasetNameRoute
+  '/datasets/view/$datasetName': typeof AuthenticatedDatasetsViewDatasetNameRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -125,6 +134,7 @@ export interface FileRoutesById {
   '/_authenticated/models/': typeof AuthenticatedModelsIndexRoute
   '/_authenticated/settings/': typeof AuthenticatedSettingsIndexRoute
   '/_authenticated/datasets/edit/$datasetName': typeof AuthenticatedDatasetsEditDatasetNameRoute
+  '/_authenticated/datasets/view/$datasetName': typeof AuthenticatedDatasetsViewDatasetNameRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -139,6 +149,7 @@ export interface FileRouteTypes {
     | '/models/'
     | '/settings/'
     | '/datasets/edit/$datasetName'
+    | '/datasets/view/$datasetName'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -151,6 +162,7 @@ export interface FileRouteTypes {
     | '/models'
     | '/settings'
     | '/datasets/edit/$datasetName'
+    | '/datasets/view/$datasetName'
   id:
     | '__root__'
     | '/_auth'
@@ -165,6 +177,7 @@ export interface FileRouteTypes {
     | '/_authenticated/models/'
     | '/_authenticated/settings/'
     | '/_authenticated/datasets/edit/$datasetName'
+    | '/_authenticated/datasets/view/$datasetName'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -251,6 +264,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedDatasetsUploadRouteImport
       parentRoute: typeof AuthenticatedRoute
     }
+    '/_authenticated/datasets/view/$datasetName': {
+      id: '/_authenticated/datasets/view/$datasetName'
+      path: '/datasets/view/$datasetName'
+      fullPath: '/datasets/view/$datasetName'
+      preLoaderRoute: typeof AuthenticatedDatasetsViewDatasetNameRouteImport
+      parentRoute: typeof AuthenticatedRoute
+    }
     '/_authenticated/datasets/edit/$datasetName': {
       id: '/_authenticated/datasets/edit/$datasetName'
       path: '/datasets/edit/$datasetName'
@@ -281,6 +301,7 @@ interface AuthenticatedRouteChildren {
   AuthenticatedModelsIndexRoute: typeof AuthenticatedModelsIndexRoute
   AuthenticatedSettingsIndexRoute: typeof AuthenticatedSettingsIndexRoute
   AuthenticatedDatasetsEditDatasetNameRoute: typeof AuthenticatedDatasetsEditDatasetNameRoute
+  AuthenticatedDatasetsViewDatasetNameRoute: typeof AuthenticatedDatasetsViewDatasetNameRoute
 }
 
 const AuthenticatedRouteChildren: AuthenticatedRouteChildren = {
@@ -294,6 +315,8 @@ const AuthenticatedRouteChildren: AuthenticatedRouteChildren = {
   AuthenticatedSettingsIndexRoute: AuthenticatedSettingsIndexRoute,
   AuthenticatedDatasetsEditDatasetNameRoute:
     AuthenticatedDatasetsEditDatasetNameRoute,
+  AuthenticatedDatasetsViewDatasetNameRoute:
+    AuthenticatedDatasetsViewDatasetNameRoute,
 }
 
 const AuthenticatedRouteWithChildren = AuthenticatedRoute._addFileChildren(

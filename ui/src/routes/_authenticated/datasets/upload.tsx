@@ -1,3 +1,4 @@
+import UploadDatasetPage from '@pages/datasets/ready/UploadDatasetPage';
 import { createFileRoute } from '@tanstack/react-router'
 
 export const Route = createFileRoute('/_authenticated/datasets/upload')({
@@ -6,8 +7,6 @@ export const Route = createFileRoute('/_authenticated/datasets/upload')({
 
 function RouteComponent() {
   return (
-    <>
-      
-    </>
+    <UploadDatasetPage/>
   );
 }

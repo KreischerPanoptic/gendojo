@@ -1,6 +1,6 @@
 import { ActionIcon, Center, Group, Text, Tooltip } from '@mantine/core'
 import { openConfirmModal } from '@mantine/modals'
-import { IconClick, IconEdit, IconTrash, IconTrashX, IconUserOff } from '@tabler/icons-react'
+import { IconClick, IconEdit, IconEye, IconTrash, IconTrashX, IconUserOff } from '@tabler/icons-react'
 import type { DataTableColumn } from 'mantine-datatable'
 import { DataTable } from 'mantine-datatable'
 import { useContextMenu } from 'mantine-contextmenu'
@@ -10,18 +10,17 @@ import { useDatasets, useRemoveDataset } from '@services/datasets'
 
 interface DatasetsTableProps {
   onAdd: () => void
+  onView: (dataset: DatasetSummary) => void
   onEdit: (dataset: DatasetSummary) => void
 }
 
-export default function DatasetsTable({ onEdit }: DatasetsTableProps) {
+export default function DatasetsTable({ onView, onEdit }: DatasetsTableProps) {
   const { showContextMenu, hideContextMenu } = useContextMenu()
-
   const [selectedRecords, setSelectedRecords] = useState<DatasetSummary[]>([])
-
   const { data, isFetching } = useDatasets()
   const { mutate: removeDataset } = useRemoveDataset()
 
-  // -------- Delete helpers --------
+  // ── Delete helpers ──────────────────────────────────────────────────────────
 
   const confirmDeleteOne = useCallback(
     (dataset: DatasetSummary) => {
@@ -30,9 +29,7 @@ export default function DatasetsTable({ onEdit }: DatasetsTableProps) {
         centered: true,
         children: (
           <Text size="sm">
-            Are you sure you want to remove{' '}
-            <strong>{dataset.name}</strong>?
-            It's irreversible.
+            Are you sure you want to remove <strong>{dataset.name}</strong>? It's irreversible.
           </Text>
         ),
         labels: { confirm: 'Remove', cancel: 'Cancel' },
@@ -49,9 +46,7 @@ export default function DatasetsTable({ onEdit }: DatasetsTableProps) {
       centered: true,
       children: (
         <Text size="sm">
-          Are you sure you want to remove{' '}
-          <strong>{selectedRecords.length}</strong> selected datasets?
-          It's irreversible.
+          Are you sure you want to remove <strong>{selectedRecords.length}</strong> selected datasets? It's irreversible.
         </Text>
       ),
       labels: { confirm: 'Remove', cancel: 'Cancel' },
@@ -63,7 +58,7 @@ export default function DatasetsTable({ onEdit }: DatasetsTableProps) {
     })
   }, [selectedRecords, removeDataset])
 
-  // -------- Columns --------
+  // ── Columns ─────────────────────────────────────────────────────────────────
 
   const columns: DataTableColumn<DatasetSummary>[] = useMemo(
     () => [
@@ -79,16 +74,15 @@ export default function DatasetsTable({ onEdit }: DatasetsTableProps) {
       },
       {
         accessor: 'imageCount',
-        title: "Image count",
+        title: 'Image count',
         sortable: true,
       },
       {
         accessor: 'captionCoverage',
         title: 'Caption coverage (%)',
-        width: 100,
         render: ({ captionCoverage }) => (
           <Text size="xs" c={captionCoverage ? 'teal' : 'dimmed'} fw={500}>
-            {captionCoverage*100}%
+            {Math.round(captionCoverage * 100)}%
           </Text>
         ),
       },
@@ -102,6 +96,19 @@ export default function DatasetsTable({ onEdit }: DatasetsTableProps) {
         width: '0%',
         render: (dataset) => (
           <Group gap={4} justify="right" wrap="nowrap">
+            <Tooltip label="View" withArrow>
+              <ActionIcon
+                size="sm"
+                variant="subtle"
+                color="blue"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  onView(dataset)
+                }}
+              >
+                <IconEye size={14} />
+              </ActionIcon>
+            </Tooltip>
             <Tooltip label="Edit" withArrow>
               <ActionIcon
                 size="sm"
@@ -131,14 +138,20 @@ export default function DatasetsTable({ onEdit }: DatasetsTableProps) {
         ),
       },
     ],
-    [onEdit, confirmDeleteOne],
+    [onView, onEdit, confirmDeleteOne],
   )
 
-  // -------- Context menu --------
+  // ── Context menu ─────────────────────────────────────────────────────────────
 
   const handleContextMenu = useCallback(
     ({ record, event }: { record: DatasetSummary; event: React.MouseEvent }) => {
       showContextMenu([
+        {
+          key: 'view',
+          icon: <IconEye size={14} />,
+          title: `View ${record.name}`,
+          onClick: () => onView(record),
+        },
         {
           key: 'edit',
           icon: <IconEdit size={14} />,
@@ -147,34 +160,37 @@ export default function DatasetsTable({ onEdit }: DatasetsTableProps) {
         },
         {
           key: 'remove',
-          icon: <IconTrashX color='red' size={14} />,
+          icon: <IconTrashX color="red" size={14} />,
           title: `Remove ${record.name}`,
           color: 'red',
           onClick: () => confirmDeleteOne(record),
         },
-        { key: 'divider',hidden:
+        {
+          key: 'divider',
+          hidden:
             selectedRecords.length <= 1 ||
-            !selectedRecords.some((r) => r.name === record.name), },
+            !selectedRecords.some((r) => r.name === record.name),
+        },
         {
           key: 'removeMany',
           hidden:
             selectedRecords.length <= 1 ||
             !selectedRecords.some((r) => r.name === record.name),
-          icon: <IconTrash color='red' size={14} />,
+          icon: <IconTrash color="red" size={14} />,
           title: `Remove ${selectedRecords.length} selected`,
           color: 'red',
           onClick: confirmDeleteSelected,
         },
-      ], {className: 'px-3 py-2 !rounded-md'})(event)
+      ], { className: 'px-3 py-2 !rounded-md' })(event)
     },
-    [showContextMenu, selectedRecords, onEdit, confirmDeleteOne, confirmDeleteSelected],
+    [showContextMenu, selectedRecords, onView, onEdit, confirmDeleteOne, confirmDeleteSelected],
   )
 
-  // -------- Render --------
+  // ── Render ────────────────────────────────────────────────────────────────
 
   return (
     <DataTable<DatasetSummary>
-        backgroundColor={{light: 'light', dark: 'dark'}}
+      backgroundColor={{ light: 'light', dark: 'dark' }}
       withTableBorder
       withRowBorders
       highlightOnHover
@@ -183,22 +199,16 @@ export default function DatasetsTable({ onEdit }: DatasetsTableProps) {
       minHeight={300}
       fetching={isFetching}
       records={data}
-      // Pagination
       totalRecords={data?.length ?? 0}
-      // Selection
       selectedRecords={selectedRecords}
       onSelectedRecordsChange={setSelectedRecords}
-      // Context menu
       onRowContextMenu={handleContextMenu}
       onScroll={hideContextMenu}
-      // Columns
       columns={columns}
-      // Empty state
       noRecordsText="No datasets found"
       noRecordsIcon={<IconUserOff size={36} strokeWidth={1.5} />}
     />
   )
 }
 
-// Export the selected records state setter so DatasetsPage can trigger bulk delete from the toolbar
 export type { DatasetsTableProps }

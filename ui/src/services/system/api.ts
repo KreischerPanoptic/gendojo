@@ -9,7 +9,6 @@ export const systemApi = {
    */
   getSnapshot: async (): Promise<SystemSnapshot> => {
     const { data } = await apiClient.get<SystemSnapshot>('/system')
-    console.log('data: ', data)
     return data
   },
 

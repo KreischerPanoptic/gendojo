@@ -296,6 +296,45 @@ export class DatasetsService {
     return { deleted: true };
   }
 
+  /**
+   * Read the caption text for a given image.
+   * Returns { caption: string } if the .txt file exists, or { caption: null } if it doesn't.
+   * Does NOT throw 404 when caption is missing — absence is a valid state.
+   *
+   * @param name      Dataset name
+   * @param imageName Image filename (e.g. "cat_001.jpg")
+   */
+  async getCaption(
+    name: string,
+    imageName: string,
+  ): Promise<{ caption: string | null }> {
+    const datasetPath = this.datasetPath(name);
+    await this.assertExists(name, datasetPath);
+
+    if (!isImage(imageName)) {
+      throw new BadRequestException(`"${imageName}" is not a supported image filename`);
+    }
+
+    const captionPath = path.join(datasetPath, `${stem(imageName)}.txt`);
+    try {
+      const text = await fs.readFile(captionPath, 'utf8');
+      return { caption: text.trim() };
+    } catch {
+      return { caption: null };
+    }
+  }
+
+  /**
+   * Resolve the absolute path to an image file inside a dataset.
+   * Used by the controller to serve image files directly.
+   * Validates that the dataset directory exists before returning the path.
+   */
+  async resolveImagePath(name: string, filename: string): Promise<string> {
+    const datasetPath = this.datasetPath(name);
+    await this.assertExists(name, datasetPath);
+    return path.join(datasetPath, filename);
+  }
+
   // ── Private helpers ─────────────────────────────────────────────────────────
 
   private datasetPath(name: string): string {

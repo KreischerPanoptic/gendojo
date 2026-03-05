@@ -28,7 +28,7 @@ function AuthenticatedLayout() {
       </MainContent>
 
       {/* Floating — top right corner, above everything */}
-      <NotificationsButton />
+      {/* <NotificationsButton /> */}
     </div>
   )
 }

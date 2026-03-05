@@ -14,9 +14,14 @@ import {
   MaxFileSizeValidator,
   Query,
   BadRequestException,
+  Res,
+  NotFoundException,
 } from '@nestjs/common';
-import { FileInterceptor, FilesInterceptor } from '@nestjs/platform-express';
+import { FileInterceptor, FileFieldsInterceptor } from '@nestjs/platform-express';
 import { memoryStorage } from 'multer';
+import type { Response } from 'express';
+import * as path from 'path';
+import * as fs from 'fs/promises';
 
 import { DatasetsService } from './datasets.service';
 
@@ -26,16 +31,24 @@ const ZIP_MAX_SIZE_BYTES = 500 * 1024 * 1024;
 // 50 MB per individual file
 const FILE_MAX_SIZE_BYTES = 50 * 1024 * 1024;
 
+const IMAGE_MIME: Record<string, string> = {
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.png': 'image/png',
+  '.webp': 'image/webp',
+};
+
 /**
  * REST API for managing training datasets.
  *
- * GET    /datasets                         — list all datasets
- * GET    /datasets/:name                   — detail + image list
- * DELETE /datasets/:name                   — remove dataset directory
+ * GET    /datasets                              — list all datasets
+ * GET    /datasets/:name                        — detail + image list
+ * GET    /datasets/:name/images/:filename       — serve a single image file
+ * DELETE /datasets/:name                        — remove dataset directory
  *
- * POST   /datasets/upload/zip              — upload zip → extract to /workspace/datasets/<name>/
- * POST   /datasets/upload/files            — upload individual files (multipart)
- * POST   /datasets/:name/captions/:image   — upsert caption for a single image
+ * POST   /datasets/upload/zip                   — upload zip → extract to /workspace/datasets/<n>/
+ * POST   /datasets/upload/files                 — upload individual files (multipart)
+ * POST   /datasets/:name/captions/:image        — upsert caption for a single image
  */
 @Controller('datasets')
 export class DatasetsController {
@@ -55,20 +68,53 @@ export class DatasetsController {
     return this.datasetsService.getOne(name);
   }
 
+  /**
+   * GET /datasets/:name/images/:filename
+   *
+   * Serves a single image file from the dataset directory.
+   * The filename must be an image supported by sd-scripts (jpg/jpeg/png/webp).
+   *
+   * Used by the UI to render image thumbnails and previews in the dataset editor.
+   *
+   * Security: filename is stripped of any path separators to prevent traversal.
+   */
+  @Get(':name/images/:filename')
+  async serveImage(
+    @Param('name') name: string,
+    @Param('filename') filename: string,
+    @Res() res: Response,
+  ) {
+    // Strip any path separators — no traversal allowed
+    const safeFilename = path.basename(filename);
+    const ext = path.extname(safeFilename).toLowerCase();
+
+    const mimeType = IMAGE_MIME[ext];
+    if (!mimeType) {
+      throw new BadRequestException(`Unsupported image extension: ${ext}`);
+    }
+
+    const imagePath = await this.datasetsService.resolveImagePath(name, safeFilename);
+
+    try {
+      await fs.access(imagePath);
+    } catch {
+      throw new NotFoundException(`Image "${safeFilename}" not found in dataset "${name}"`);
+    }
+
+    res.setHeader('Content-Type', mimeType);
+    res.setHeader('Cache-Control', 'public, max-age=3600');
+    res.sendFile(imagePath);
+  }
+
   // ── Upload ZIP ─────────────────────────────────────────────────────────────
 
   /**
    * POST /datasets/upload/zip
    *
    * Multipart body:
-   *   file     — the zip archive
-   *   name     — target dataset directory name (e.g. "my_char")
+   *   file      — the zip archive
+   *   name      — target dataset directory name (e.g. "my_char")
    *   overwrite — "true" | "false" (default "true")
-   *
-   * Returns UploadResult with image/caption counts.
-   *
-   * Multer stores the file in memory so we can pass the buffer directly to
-   * unzipper.  For very large datasets (>500 MB) advise using `POST /datasets/upload/files`.
    */
   @Post('upload/zip')
   @HttpCode(HttpStatus.CREATED)
@@ -101,48 +147,56 @@ export class DatasetsController {
    * POST /datasets/upload/files?name=<dataset_name>
    *
    * Multipart body: field "files[]" — one or more image (.jpg/.png/.webp) or
-   * caption (.txt) files.  Max 50 files per request.
-   *
-   * Query: name — dataset directory name (created if missing)
-   *
-   * Useful for small incremental additions without re-uploading the full dataset.
+   * caption (.txt) files. Files are sent one per request, called in parallel.
    */
-  @Post('upload/files')
+  @Post('upload/file')
   @HttpCode(HttpStatus.CREATED)
   @UseInterceptors(
-    FilesInterceptor('files[]', 50, {
+    FileInterceptor('file', {
       storage: memoryStorage(),
       limits: { fileSize: FILE_MAX_SIZE_BYTES },
     }),
   )
-  async uploadFiles(
-    @UploadedFiles() files: Express.Multer.File[],
+  async uploadFile(
+    @UploadedFile(
+      new ParseFilePipe({
+        validators: [new MaxFileSizeValidator({ maxSize: FILE_MAX_SIZE_BYTES })],
+      }),
+    )
+    file: Express.Multer.File,
     @Query('name') name: string,
   ) {
     if (!name) {
       throw new BadRequestException('Query param "name" is required');
     }
-    if (!files || files.length === 0) {
-      throw new BadRequestException('At least one file is required');
-    }
-    return this.datasetsService.uploadFiles(name, files);
+    return this.datasetsService.uploadFiles(name, [file]);
   }
 
   // ── Caption management ─────────────────────────────────────────────────────
 
   /**
+   * GET /datasets/:name/captions/:image
+   *
+   * Returns the caption text for a given image.
+   * Responds with { caption: string } if the .txt file exists,
+   * or { caption: null } if no caption has been written yet.
+   * Never returns 404 for a missing caption — absence is valid.
+   */
+  @Get(':name/captions/:image')
+  @HttpCode(HttpStatus.OK)
+  async getCaption(
+    @Param('name') name: string,
+    @Param('image') image: string,
+  ) {
+    const safeImage = path.basename(image);
+    return this.datasetsService.getCaption(name, safeImage);
+  }
+
+  /**
    * POST /datasets/:name/captions/:image
    *
-   * Body: plain text caption string (Content-Type: text/plain)
-   *   — or —
-   * Body: JSON { caption: string }  (Content-Type: application/json)
-   *
+   * Body: JSON { caption: string }
    * Creates or overwrites the .txt caption file matching the image name.
-   * The target image must already exist in the dataset.
-   *
-   * Example:
-   *   POST /datasets/my_char/captions/my_char_001.jpg
-   *   Body: "a photo of my_char, detailed fur, soft lighting"
    */
   @Post(':name/captions/:image')
   @HttpCode(HttpStatus.OK)
@@ -167,7 +221,6 @@ export class DatasetsController {
    * DELETE /datasets/:name
    *
    * Permanently removes the dataset directory and all its contents.
-   * Returns 404 if dataset doesn't exist.
    */
   @Delete(':name')
   @HttpCode(HttpStatus.OK)

@@ -5,7 +5,7 @@ import type { UploadProgressEvent } from './types'
 import { datasetsQueryKeys } from './keys'
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Upload — wraps XHR-based upload with reactive progress state
+// Shared upload state type
 // ─────────────────────────────────────────────────────────────────────────────
 
 export interface UploadDatasetState {
@@ -13,7 +13,11 @@ export interface UploadDatasetState {
   isUploading: boolean
 }
 
-export const useUploadDataset = () => {
+// ─────────────────────────────────────────────────────────────────────────────
+// Upload ZIP archive
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const useUploadDatasetZip = () => {
   const queryClient = useQueryClient()
   const [uploadState, setUploadState] = useState<UploadDatasetState>({
     progress: 0,
@@ -21,32 +25,94 @@ export const useUploadDataset = () => {
   })
 
   const mutation = useMutation({
-    mutationFn: (file: File) => {
+    mutationFn: ({ name, file }: { name: string; file: File }) => {
       setUploadState({ progress: 0, isUploading: true })
 
-      return datasetsApi.upload(file, (event: UploadProgressEvent) => {
+      return datasetsApi.uploadZip(name, file, (event: UploadProgressEvent) => {
         setUploadState({ progress: event.percent, isUploading: true })
       })
     },
 
     onSuccess: () => {
       setUploadState({ progress: 100, isUploading: false })
-      // Invalidate list so the new dataset appears immediately
       void queryClient.invalidateQueries({ queryKey: datasetsQueryKeys.all })
     },
 
     onError: (error) => {
       setUploadState({ progress: 0, isUploading: false })
-      console.error('[Datasets] Upload failed:', error)
+      console.error('[Datasets] ZIP upload failed:', error)
     },
   })
 
   return {
     ...mutation,
     uploadState,
-    /** Reset progress after the upload card is dismissed */
     resetProgress: () => setUploadState({ progress: 0, isUploading: false }),
   }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Upload individual files
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const useUploadDatasetFiles = () => {
+  const queryClient = useQueryClient()
+  const [uploadState, setUploadState] = useState<UploadDatasetState>({
+    progress: 0,
+    isUploading: false,
+  })
+
+  const mutation = useMutation({
+    mutationFn: ({ name, files }: { name: string; files: File[] }) => {
+      setUploadState({ progress: 0, isUploading: true })
+
+      return datasetsApi.uploadFiles(name, files, (event: UploadProgressEvent) => {
+        setUploadState({ progress: event.percent, isUploading: true })
+      })
+    },
+
+    onSuccess: () => {
+      setUploadState({ progress: 100, isUploading: false })
+      void queryClient.invalidateQueries({ queryKey: datasetsQueryKeys.all })
+    },
+
+    onError: (error) => {
+      setUploadState({ progress: 0, isUploading: false })
+      console.error('[Datasets] Files upload failed:', error)
+    },
+  })
+
+  return {
+    ...mutation,
+    uploadState,
+    resetProgress: () => setUploadState({ progress: 0, isUploading: false }),
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Upsert caption for a single image
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const useUpsertCaption = (datasetName: string) => {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: ({ imageName, caption }: { imageName: string; caption: string }) =>
+      datasetsApi.upsertCaption(datasetName, imageName, caption),
+
+    onSuccess: (_data, { imageName }) => {
+      // Invalidate the caption cache for this specific image
+      void queryClient.invalidateQueries({
+        queryKey: datasetsQueryKeys.caption(datasetName, imageName),
+      })
+      // Refresh dataset detail so hasCaption flags update
+      void queryClient.invalidateQueries({ queryKey: datasetsQueryKeys.detail(datasetName) })
+    },
+
+    onError: (error) => {
+      console.error('[Datasets] Caption save failed:', error)
+    },
+  })
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -60,9 +126,7 @@ export const useRemoveDataset = () => {
     mutationFn: (name: string) => datasetsApi.remove(name),
 
     onSuccess: (_data, name) => {
-      // Remove detail from cache immediately
       queryClient.removeQueries({ queryKey: datasetsQueryKeys.detail(name) })
-      // Refresh list
       void queryClient.invalidateQueries({ queryKey: datasetsQueryKeys.all })
     },
 

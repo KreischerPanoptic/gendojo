@@ -10,19 +10,35 @@ export const useDatasets = () => {
     queryFn: () => datasetsApi.list(),
     refetchInterval: 5_000,
     staleTime: 4_500,
-    // Don't throw on error — sidebar should degrade gracefully
     throwOnError: false,
   })
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+
 export const useDataset = (name: string) => {
   return useQuery({
     queryKey: datasetsQueryKeys.detail(name),
     queryFn: () => datasetsApi.getOne(name),
     refetchInterval: 5_000,
     staleTime: 4_500,
-    // Don't throw on error — sidebar should degrade gracefully
+    throwOnError: false,
+  })
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Fetch caption text for a single image.
+// enabled=false when no image is selected yet.
+// Returns { caption: string | null } — null means no .txt file exists.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const useCaption = (datasetName: string, imageName: string, enabled = true) => {
+  return useQuery({
+    queryKey: datasetsQueryKeys.caption(datasetName, imageName),
+    queryFn: () => datasetsApi.getCaption(datasetName, imageName),
+    enabled: enabled && !!datasetName && !!imageName,
+    // Captions change only when the user saves — no need to poll
+    staleTime: 60_000,
     throwOnError: false,
   })
 }
