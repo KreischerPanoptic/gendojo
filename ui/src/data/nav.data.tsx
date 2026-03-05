@@ -32,7 +32,10 @@ export const navBlocks: Block[] = [
     label: 'Models',
     link: '/models',
     icon: <IconFile3d size={18} stroke={1.5} />,
-    disabled: true,
+    children: [
+      { label: 'Available Models', link: '/models' },
+      { label: 'Download Models',       link: '/models/download', disabled: true },
+    ],
   },
   {
     label: 'Tools',
