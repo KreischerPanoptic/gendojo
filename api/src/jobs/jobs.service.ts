@@ -10,7 +10,7 @@ import { PathsConfig } from '../config/paths.config';
 import { SettingsService } from '../system/settings/settings.service';
 import { TomlService } from '../toml/toml.service';
 import { DatasetsService } from '../datasets/datasets.service';
-import { validateTrainConfig } from '../toml/train-config.validator';
+import { validateTrainConfig } from '../utils/toml';
 
 import type { DatasetTomlDto } from '../toml/dto/dataset-toml.dto';
 import {

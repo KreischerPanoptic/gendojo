@@ -12,10 +12,6 @@
 // Image file record
 // ─────────────────────────────────────────────────────────────────────────────
 
-export type SupportedImageExt = 'jpg' | 'jpeg' | 'png' | 'webp';
-
-export const SUPPORTED_IMAGE_EXTS: SupportedImageExt[] = ['jpg', 'jpeg', 'png', 'webp'];
-
 export interface DatasetImage {
   /** Filename only, e.g. "my_char_001.jpg" */
   filename: string;

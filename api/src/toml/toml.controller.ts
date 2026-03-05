@@ -7,8 +7,8 @@ import {
   UnprocessableEntityException,
 } from '@nestjs/common';
 import { TomlService } from './toml.service';
-import { validateTrainConfig } from './train-config.validator';
-import type { ValidationResult } from './train-config.validator';
+import { validateTrainConfig } from '../utils/toml';
+import type { ValidationResult } from '../utils/toml';
 import type { TrainTomlDto } from './dto/train-toml.dto';
 import type { DatasetTomlDto } from './dto/dataset-toml.dto';
 

@@ -12,30 +12,8 @@ import type {
   DatasetDetail,
   DatasetImage,
   UploadResult,
-} from './dto/dataset-info.types';
-import { SUPPORTED_IMAGE_EXTS } from './dto/dataset-info.types';
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Helpers
-// ─────────────────────────────────────────────────────────────────────────────
-
-/** Returns lowercase extension WITHOUT the leading dot, e.g. "jpg" */
-function extOf(filename: string): string {
-  return path.extname(filename).replace(/^\./, '').toLowerCase();
-}
-
-function isImage(filename: string): boolean {
-  return (SUPPORTED_IMAGE_EXTS as string[]).includes(extOf(filename));
-}
-
-function isCaption(filename: string): boolean {
-  return extOf(filename) === 'txt';
-}
-
-/** Strip extension from a filename, e.g. "cat.jpg" → "cat" */
-function stem(filename: string): string {
-  return path.basename(filename, path.extname(filename));
-}
+} from './entities/dataset-info.types';
+import { isCaption, isImage, stem } from 'src/utils/dataset';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // DatasetsService

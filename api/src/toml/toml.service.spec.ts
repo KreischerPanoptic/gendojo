@@ -12,7 +12,7 @@ import type {
   HunyuanTrainDto,
 } from './dto/train-toml.dto';
 import type { DatasetTomlDto } from './dto/dataset-toml.dto';
-import { validateTrainConfig } from './train-config.validator';
+import { validateTrainConfig } from '../utils/toml';
 
 describe('TomlService', () => {
   let service: TomlService;

@@ -1,10 +1,10 @@
 {
-  "name": "api",
+  "name": "gendojo-api",
   "version": "0.0.1",
-  "description": "",
-  "author": "",
+  "description": "API layer for GenDojo - A Generative AI Dojo for LoRA/Dreambooth/TI training using kohya_ss/sd-scripts with a WebUI layer on top",
+  "author": "KreischerPanoptic (Denys Soroka)",
   "private": true,
-  "license": "UNLICENSED",
+  "license": "MIT",
   "scripts": {
     "build": "nest build",
     "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",

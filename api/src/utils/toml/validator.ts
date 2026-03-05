@@ -19,7 +19,7 @@ import type {
   LuminaTrainDto,
   HunyuanTrainDto,
   SdxlTrainDto,
-} from './dto/train-toml.dto';
+} from '../../toml/dto/train-toml.dto';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Result type
