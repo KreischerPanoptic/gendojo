@@ -158,6 +158,7 @@ function ArchPanel({ models }: { models: ModelFile[] }) {
   return (
     <DataTable<ModelFile>
       withRowBorders
+      withTableBorder
       highlightOnHover
       borderRadius="md"
       records={sorted}

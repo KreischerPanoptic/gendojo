@@ -1,6 +1,6 @@
 import { ActionIcon, Center, Group, Text, Tooltip } from '@mantine/core'
 import { openConfirmModal } from '@mantine/modals'
-import { IconClick, IconEdit, IconEye, IconTrash, IconTrashX, IconUserOff } from '@tabler/icons-react'
+import { IconClick, IconEdit, IconEye, IconTrash, IconTrashX, IconChartBarOff } from '@tabler/icons-react'
 import type { DataTableColumn } from 'mantine-datatable'
 import { DataTable } from 'mantine-datatable'
 import { useContextMenu } from 'mantine-contextmenu'
@@ -81,7 +81,7 @@ export default function DatasetsTable({ onView, onEdit }: DatasetsTableProps) {
         accessor: 'captionCoverage',
         title: 'Caption coverage (%)',
         render: ({ captionCoverage }) => (
-          <Text size="xs" c={captionCoverage ? 'teal' : 'dimmed'} fw={500}>
+          <Text size="xs" c={captionCoverage ? Math.round(captionCoverage * 100) >= 100 ? 'green' : 'yellow' : 'red'} fw={500}>
             {Math.round(captionCoverage * 100)}%
           </Text>
         ),
@@ -190,6 +190,7 @@ export default function DatasetsTable({ onView, onEdit }: DatasetsTableProps) {
 
   return (
     <DataTable<DatasetSummary>
+      idAccessor='name'
       backgroundColor={{ light: 'light', dark: 'dark' }}
       withTableBorder
       withRowBorders
@@ -199,14 +200,13 @@ export default function DatasetsTable({ onView, onEdit }: DatasetsTableProps) {
       minHeight={300}
       fetching={isFetching}
       records={data}
-      totalRecords={data?.length ?? 0}
       selectedRecords={selectedRecords}
       onSelectedRecordsChange={setSelectedRecords}
       onRowContextMenu={handleContextMenu}
       onScroll={hideContextMenu}
       columns={columns}
       noRecordsText="No datasets found"
-      noRecordsIcon={<IconUserOff size={36} strokeWidth={1.5} />}
+      noRecordsIcon={<IconChartBarOff size={36} strokeWidth={1.5} />}
     />
   )
 }

@@ -24,6 +24,22 @@
   --mantine-color-body: var(--gd-bg);
 }
 
+[data-mantine-color-scheme='light'] {
+  --gd-bg:         #f8f9fc;
+  --gd-surface:    #ffffff;
+  --gd-panel:      #f1f3f8;
+  --gd-border:     #e2e6ef;
+  --gd-border-sub: #edf0f5;
+  --gd-accent:     #f97316;
+  --gd-accent-dim: rgba(249, 115, 22, 0.10);
+  --gd-text:       #111827;
+  --gd-text-muted: #6b7280;
+  --gd-grid-line:  rgba(0, 0, 0, 0.04);
+
+  --mantine-color-body: var(--gd-bg);
+}
+
+
 :root {
   font-family: var(--font-body);
   background: var(--gd-bg);

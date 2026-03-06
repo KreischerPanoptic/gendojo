@@ -14,7 +14,6 @@ export const navBlocks: Block[] = [
     link: '/jobs',
     icon: <IconBriefcase2 size={18} stroke={1.5} />,
     children: [
-      { label: 'Overview', link: '/jobs/overview' },
       { label: 'All Jobs',  link: '/jobs' },
       { label: 'New Job',   link: '/jobs/new' },
     ],
