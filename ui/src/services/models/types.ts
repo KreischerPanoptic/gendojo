@@ -40,8 +40,12 @@ export interface ModelFile {
   id: string
   /** Filename without extension */
   name: string
-  /** Absolute path on disk */
-  path: string
+  /** Original filename with extension */
+  filename: string
+  /** Relative path from the models root */
+  relativePath: string
+  /** Absolute path on disk — pass this to sd-scripts */
+  absolutePath: string
   arch: ModelArchitecture
   role: ModelRole
   type: ModelType
@@ -89,7 +93,6 @@ export const ROLE_LABEL: Record<ModelRole, string> = {
   unknown:     'Unknown',
 }
 
-/** Mantine color for each architecture badge */
 export const ARCH_COLOR: Record<ModelArchitecture, string> = {
   sd1:     'gray',
   sd2:     'gray',
@@ -103,14 +106,6 @@ export const ARCH_COLOR: Record<ModelArchitecture, string> = {
   unknown: 'dark',
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Size formatting helper
-// ─────────────────────────────────────────────────────────────────────────────
-
-/**
- * Format raw bytes into a human-readable string.
- * Models are typically GiB-range so we auto-pick the best unit.
- */
 export function formatSize(bytes: number): string {
   if (bytes === 0) return '—'
   const GiB = 1024 ** 3

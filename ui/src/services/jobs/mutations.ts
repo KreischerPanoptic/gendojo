@@ -10,16 +10,7 @@ import type {
   LogLine,
 } from './types'
 import { getJobsSocket } from '@services/socket'
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Query keys
-// ─────────────────────────────────────────────────────────────────────────────
-
-export const jobsQueryKeys = {
-  all:    ['jobs']              as const,
-  detail: (id: string) => ['jobs', id] as const,
-  logs:   (id: string) => ['jobs', id, 'logs'] as const,
-}
+import { jobsQueryKeys } from './keys'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Create job

@@ -103,6 +103,7 @@ export function LightboxModal({ images, index, datasetName, onClose, onNavigate,
             position: 'relative',
             overflow: 'hidden',
             minWidth: 0,
+            maxHeight: '80vh',
           }}
         >
           {imgError ? (

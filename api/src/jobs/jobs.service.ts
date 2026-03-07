@@ -65,17 +65,7 @@ export class JobsService extends EventEmitter implements OnModuleDestroy {
     // 1. Resolve dataset — either from ref or full DTO
     const { datasetDto, datasetName } = await this.resolveDataset(dto);
 
-    // 2. Validate train config
-    const validation = validateTrainConfig(dto.train);
-    if (!validation.valid) {
-      const messages = validation.errors.map(e => `${e.field}: ${e.message}`).join('; ');
-      throw Object.assign(
-        new Error(`Train config validation failed — ${messages}`),
-        { statusCode: 422, validation },
-      );
-    }
-
-    // 3. Enforce concurrency cap
+    // 2. Enforce concurrency cap (cheap check, before any I/O)
     const running = [...this.jobs.values()].filter(j => j.status === JobStatus.Running);
     if (running.length >= this.maxConcurrentJobs) {
       throw Object.assign(
@@ -84,29 +74,45 @@ export class JobsService extends EventEmitter implements OnModuleDestroy {
       );
     }
 
-    // 4. Assign ID and set up directories
-    const jobId      = randomUUID();
-    const jobDir     = this.paths.jobDir(jobId);
-    const jobTempDir = this.paths.jobTempDir(jobId);
-    await fs.mkdir(jobDir,     { recursive: true });
-    await fs.mkdir(jobTempDir, { recursive: true });
+    // 3. Generate job ID and compute all paths up-front.
+    //    jobId is just a UUID — no I/O needed here.
+    const jobId           = randomUUID();
+    const jobDir          = this.paths.jobDir(jobId);
+    const jobTempDir      = this.paths.jobTempDir(jobId);
+    // TOML files live alongside the log in jobDir — one directory for all job artifacts
+    const datasetTomlPath = path.join(jobDir, 'dataset.toml');
+    const trainTomlPath   = path.join(jobDir, 'train.toml');
+    const logFilePath     = path.join(jobDir, 'train.log');
 
-    // 5. Resolve training script
+    // 4. Build enriched train DTO with runtime-injected fields.
+    //    output_dir defaults to <outputs>/<output_name> so each run gets its own subfolder.
+    //    dataset_config is required by the validator — inject before validation.
+    const outputName = dto.train.output_name || 'untitled';
+    const trainDto = {
+      ...dto.train,
+      output_dir:     dto.train.output_dir || path.join(this.paths.outputs, outputName),
+      dataset_config: datasetTomlPath,
+    };
+
+    // 5. Validate enriched train config (both output_dir and dataset_config are now present)
+    const validation = validateTrainConfig(trainDto);
+    if (!validation.valid) {
+      const messages = validation.errors.map(e => `${e.field}: ${e.message}`).join('; ');
+      throw Object.assign(
+        new Error(`Train config validation failed — ${messages}`),
+        { statusCode: 422, validation },
+      );
+    }
+
+    // 6. Create job directory (only after validation passes — no orphaned dirs on 422)
+    //    All job artifacts (TOMLs + log) live in jobDir together.
+    await fs.mkdir(jobDir, { recursive: true });
+
+    // 7. Resolve training script
     const script     = this.toml.getTrainScript(dto.train.arch);
     const scriptPath = path.join(this.paths.sdScripts, script);
 
-    // 6. Inject runtime paths into train DTO copy
-    const datasetTomlPath = this.paths.datasetToml(jobId);
-    const trainTomlPath   = this.paths.trainToml(jobId);
-    const logFilePath     = path.join(jobDir, 'train.log');
-
-    const trainDto = {
-      ...dto.train,
-      dataset_config: datasetTomlPath,
-      output_dir: dto.train.output_dir || this.paths.outputs,
-    };
-
-    // 7. Generate and write TOML files
+    // 8. Generate and write TOML files
     const datasetTomlContent = this.toml.generateDatasetToml(datasetDto);
     const trainTomlContent   = this.toml.generateTrainToml(trainDto);
 
@@ -116,7 +122,7 @@ export class JobsService extends EventEmitter implements OnModuleDestroy {
     this.logger.log(`Job ${jobId}: dataset.toml → ${datasetTomlPath}`);
     this.logger.log(`Job ${jobId}: train.toml   → ${trainTomlPath}`);
 
-    // 8. Build display command string
+    // 9. Build display command string
     const command = [
       'accelerate', 'launch',
       '--config_file', this.paths.accelerateConfig,
@@ -125,7 +131,7 @@ export class JobsService extends EventEmitter implements OnModuleDestroy {
       '--config_file', trainTomlPath,
     ].join(' ');
 
-    // 9. Register job record
+    // 10. Register job record
     const job: TrainingJob = {
       id: jobId,
       name: dto.train.output_name,
@@ -320,6 +326,25 @@ export class JobsService extends EventEmitter implements OnModuleDestroy {
     this.processes.set(job.id, proc);
 
     const logStream = fsSync.createWriteStream(job.logFilePath, { flags: 'a' });
+    let logStreamClosed = false;
+
+    const safeEndStream = () => {
+      if (!logStreamClosed) {
+        logStreamClosed = true;
+        logStream.end();
+      }
+    };
+
+    const safeAppendLog = (entry: LogLine) => {
+      if (!logStreamClosed) {
+        this.appendLog(job, entry, logStream);
+      } else {
+        // Stream already closed — still update in-memory buffer and emit WS event
+        job.logBuffer.push(entry);
+        if (job.logBuffer.length > this.logBufferSize) job.logBuffer.shift();
+        this.emit('job:log', { jobId: job.id, line: entry } as JobLogEvent);
+      }
+    };
 
     proc.stdout!.setEncoding('utf8');
     proc.stdout!.on('data', (chunk: string) => {
@@ -332,7 +357,7 @@ export class JobsService extends EventEmitter implements OnModuleDestroy {
     });
 
     proc.on('close', (code: number | null, signal: string | null) => {
-      logStream.end();
+      safeEndStream();
       this.processes.delete(job.id);
 
       const exitCode = code ?? (signal ? 1 : 0);
@@ -351,17 +376,14 @@ export class JobsService extends EventEmitter implements OnModuleDestroy {
     });
 
     proc.on('error', (err: Error) => {
-      logStream.end();
       this.processes.delete(job.id);
       job.status     = JobStatus.Failed;
       job.finishedAt = new Date().toISOString();
 
       this.logger.error(`Job ${job.id} process error: ${err.message}`);
-      this.appendLog(
-        job,
-        { ts: Date.now(), stream: 'stderr', text: `[process error] ${err.message}` },
-        logStream,
-      );
+      // Write error to log before closing the stream
+      safeAppendLog({ ts: Date.now(), stream: 'stderr', text: `[process error] ${err.message}` });
+      safeEndStream();
 
       this.emit('job:status', { jobId: job.id, status: JobStatus.Failed } as JobStatusEvent);
     });

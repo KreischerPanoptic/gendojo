@@ -1,3 +1,4 @@
+import JobsPage from '@pages/jobs/JobsPage';
 import { createFileRoute } from '@tanstack/react-router'
 
 export const Route = createFileRoute('/_authenticated/jobs/')({
@@ -6,8 +7,6 @@ export const Route = createFileRoute('/_authenticated/jobs/')({
 
 function RouteComponent() {
   return (
-    <>
-      
-    </>
+    <JobsPage/>
   );
 }

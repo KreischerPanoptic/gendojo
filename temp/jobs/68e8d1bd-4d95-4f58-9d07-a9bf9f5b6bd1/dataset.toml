@@ -1,0 +1,10 @@
+[[datasets]]
+resolution = 1024
+batch_size = 1
+enable_bucket = true
+min_bucket_reso = 768
+max_bucket_reso = 1536
+
+  [[datasets.subsets]]
+  num_repeats = 1
+  image_dir = "C:\\Projects\\gendojo\\datasets\\cilok"

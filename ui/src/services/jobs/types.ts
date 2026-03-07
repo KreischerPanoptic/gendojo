@@ -87,7 +87,7 @@ export type CreateJobRequest = CreateJobByRefRequest | CreateJobByDtoRequest
 // See toml/dto/train-toml.dto.ts for the full list
 // ─────────────────────────────────────────────────────────────────────────────
 
-export type ModelArchitecture = 'sd1' | 'sd2' | 'sdxl' | 'flux' | 'sd3' | 'anima' | 'lumina' | 'hunyuan'
+export type ModelArchitecture = 'sd1' | 'sd2' | 'sdxl' | 'flux' | 'sd3' | 'anima' | 'lumina' | 'hunyuan' | 'chroma'
 
 export interface TrainConfig {
   arch: ModelArchitecture

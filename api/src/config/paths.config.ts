@@ -28,7 +28,7 @@ export class PathsConfig {
 
     this.accelerateConfigResolved =
       process.env['ACCELERATE_CONFIG_PATH'] ??
-      path.join(repo, 'config_files', 'accelerate', 'default_config.yaml');
+      path.join(repo, 'configs', 'accelerate', 'default_config.yaml');
 
     this.tempResolved =
       process.env['TEMP_PATH'] ??
