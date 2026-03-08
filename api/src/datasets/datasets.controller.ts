@@ -24,6 +24,7 @@ import * as path from 'path';
 import * as fs from 'fs/promises';
 
 import { DatasetsService } from './datasets.service';
+import { SkipAuth } from 'src/auth/skip-auth.decorator';
 
 // 500 MB zip limit — RunPod disks are large, but let's be reasonable
 const ZIP_MAX_SIZE_BYTES = 500 * 1024 * 1024;
@@ -78,6 +79,7 @@ export class DatasetsController {
    *
    * Security: filename is stripped of any path separators to prevent traversal.
    */
+  @SkipAuth()
   @Get(':name/images/:filename')
   async serveImage(
     @Param('name') name: string,

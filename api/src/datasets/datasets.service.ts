@@ -14,7 +14,6 @@ import type {
   UploadResult,
 } from './entities/dataset-info.types';
 import { isCaption, isImage, stem } from 'src/utils/dataset';
-import { SkipAuth } from 'src/auth/skip-auth.decorator';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // DatasetsService
@@ -330,7 +329,6 @@ export class DatasetsService {
    * Used by the controller to serve image files directly.
    * Validates that the dataset directory exists before returning the path.
    */
-  @SkipAuth()
   async resolveImagePath(name: string, filename: string): Promise<string> {
     const datasetPath = this.datasetPath(name);
     await this.assertExists(name, datasetPath);
