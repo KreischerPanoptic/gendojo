@@ -291,7 +291,7 @@ export class JobsService extends EventEmitter implements OnModuleDestroy {
               ...(num_repeats      !== undefined && { num_repeats }),
               ...(shuffle_caption  !== undefined && { shuffle_caption }),
               ...(keep_tokens      !== undefined && { keep_tokens }),
-              ...(caption_extension !== undefined && { caption_extension }),
+              caption_extension: caption_extension ?? '.txt',
               ...(class_tokens     !== undefined && { class_tokens }),
               ...(flip_aug         !== undefined && { flip_aug }),
             },
