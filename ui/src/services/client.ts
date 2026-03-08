@@ -16,7 +16,7 @@ export const AUTH_EXPIRED_EVENT = 'gendojo:auth-expired'
  *     passes all requests. Token is still attached but ignored by the backend.
  */
 export const apiClient = axios.create({
-  baseURL: (import.meta.env.VITE_API_URL as string | undefined) ?? 'http://localhost:3000',
+  baseURL: ((import.meta.env.VITE_API_URL as string | undefined) ?? 'http://localhost:3000') + '/api',
   headers: {
     'Content-Type': 'application/json',
   },

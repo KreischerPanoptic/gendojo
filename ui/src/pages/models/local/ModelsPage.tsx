@@ -1,8 +1,9 @@
 import { ActionIcon, Group, Select, Stack, Title, Tooltip } from '@mantine/core'
-import { IconRefresh } from '@tabler/icons-react'
+import { IconDownload, IconRefresh } from '@tabler/icons-react'
 import { useState } from 'react'
 import ModelsTable from '@tables/models/ModelsTable'
 import { useRefreshModels, type ModelType } from '@services/models'
+import { useNavigate } from '@tanstack/react-router'
 
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -18,6 +19,11 @@ const TYPE_OPTIONS = [
 export default function ModelsPage() {
   const [typeFilter, setTypeFilter] = useState<ModelType | null>(null)
   const { mutate: refresh, isPending: isRefreshing } = useRefreshModels()
+  const navigate = useNavigate();
+
+  const toDownload = () => {
+    navigate({to: '/models/download/hf'})
+  }
 
   return (
     <Stack gap="lg" p="lg" className="w-full">
@@ -25,6 +31,16 @@ export default function ModelsPage() {
         <Title order={3}>Models</Title>
 
         <Group gap="sm">
+          <Tooltip label="Download models from HuggingFace or CivitAI" withArrow>
+            <ActionIcon
+              variant="outline"
+              size="lg"
+              onClick={() => toDownload()}
+              aria-label="Download models"
+            >
+              <IconDownload size={16} />
+            </ActionIcon>
+          </Tooltip>
           <Select
             size="sm"
             w={150}

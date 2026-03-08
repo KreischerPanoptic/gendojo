@@ -24,7 +24,7 @@ export function getJobsSocket(): Socket {
   if (socket?.connected) return socket
 
   const baseURL =
-    (import.meta.env.VITE_API_URL as string | undefined) ?? 'http://localhost:3001'
+    ((import.meta.env.VITE_API_URL as string | undefined) ?? 'http://localhost:3001') + '/api'
 
   const token = getToken()
 

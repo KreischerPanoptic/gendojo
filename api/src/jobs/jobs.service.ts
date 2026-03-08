@@ -307,17 +307,30 @@ export class JobsService extends EventEmitter implements OnModuleDestroy {
     this.logger.log(`Launching job ${job.id}: ${job.command}`);
 
     const args = [
-      'launch',
       '--config_file', this.paths.accelerateConfig,
       '--num_cpu_threads_per_process', this.cpuThreadsPerProcess,
       path.join(this.paths.sdScripts, job.script),
       '--config_file', job.trainTomlPath,
     ];
 
-    const proc = spawn('accelerate', args, {
+    const accelerateBin = process.env['ACCELERATE_BIN'] ?? 'accelerate';
+
+  this.logger.log(`[spawn] bin: ${accelerateBin}`);
+  this.logger.log(`[spawn] PATH: ${process.env['PATH']}`);
+  this.logger.log(`[spawn] cwd: ${this.paths.sdScripts}`);
+  this.logger.log(`[spawn] args: ${['launch', ...args].join(' ')}`);
+
+  // Проверяем что cwd существует
+  try {
+    require('fs').accessSync(this.paths.sdScripts);
+    this.logger.log(`[spawn] cwd exists: yes`);
+  } catch {
+    this.logger.error(`[spawn] cwd does NOT exist: ${this.paths.sdScripts}`);
+  }
+
+    const proc = spawn(accelerateBin, ['launch', ...args], {
       cwd: this.paths.sdScripts,
       env: { ...process.env },
-      stdio: ['ignore', 'pipe', 'pipe'],
     });
 
     job.pid       = proc.pid;

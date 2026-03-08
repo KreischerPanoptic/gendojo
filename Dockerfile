@@ -1,7 +1,6 @@
 # =============================================================================
 # GenDojo — Docker image
 # Base: RunPod PyTorch image (PyTorch 2.4.0 + Python 3.11 + CUDA 12.4.1)
-# Avoids re-downloading 3 GB of PyTorch on every build.
 # =============================================================================
 
 FROM runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04
@@ -10,6 +9,25 @@ ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 ENV NODE_ENV=production
+
+# ---------------------------------------------------------------------------
+# Пути данных — монтируются как volumes при запуске
+# На RunPod: сетевой volume монтируется отдельными папками
+# Локально:  -v ./models:/app/models  и т.д.
+# ---------------------------------------------------------------------------
+ENV MODELS_PATH=/app/models
+ENV DATASETS_PATH=/app/datasets
+ENV OUTPUTS_PATH=/app/outputs
+ENV LOGS_PATH=/app/logs
+ENV TEMP_PATH=/app/temp
+ENV SETTINGS_PATH=/app/gendojo/settings.json
+
+# ---------------------------------------------------------------------------
+# sd-scripts и accelerate
+# ---------------------------------------------------------------------------
+ENV SD_SCRIPTS_PATH=/app/sd-scripts
+ENV ACCELERATE_CONFIG_PATH=/app/configs/accelerate/default_config.yaml
+ENV ACCELERATE_BIN=/usr/local/bin/accelerate
 
 # ---------------------------------------------------------------------------
 # System deps
@@ -34,7 +52,7 @@ RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
 
 # ---------------------------------------------------------------------------
 # sd-scripts Python dependencies
-# The submodule must be checked out before building:
+# Субмодуль должен быть инициализирован до билда:
 #   git clone --recurse-submodules ...
 # ---------------------------------------------------------------------------
 WORKDIR /app
@@ -47,50 +65,54 @@ RUN pip install --no-cache-dir \
         tensorboard \
         safetensors \
         huggingface_hub \
-    && pip install --no-cache-dir -r sd-scripts/requirements.txt
+    && cd sd-scripts && pip install --no-cache-dir -r requirements.txt
 
 # ---------------------------------------------------------------------------
-# accelerate — write default config so it doesn't prompt at runtime
+# accelerate config
 # ---------------------------------------------------------------------------
 COPY configs/accelerate/runpod.yaml /app/configs/accelerate/runpod.yaml
-
-RUN mkdir -p /root/.cache/huggingface/accelerate \
+RUN cp /app/configs/accelerate/runpod.yaml /app/configs/accelerate/default_config.yaml \
+    && mkdir -p /root/.cache/huggingface/accelerate \
     && cp /app/configs/accelerate/runpod.yaml \
           /root/.cache/huggingface/accelerate/default_config.yaml
 
 # ---------------------------------------------------------------------------
 # Frontend — build React app
+# pnpm-workspace.yaml удаляется — в образе каждый пакет собирается изолированно
+# NODE_ENV=development нужен чтобы pnpm поставил devDependencies (tsc, vite и т.д.)
 # ---------------------------------------------------------------------------
-COPY ui/package.json ui/pnpm-lock.yaml ./ui/
-RUN cd ui && pnpm install --frozen-lockfile
+COPY ui/package.json ui/pnpm-lock.yaml ui/pnpm-workspace.yaml ./ui/
+RUN cd ui && rm -f pnpm-workspace.yaml \
+    && NODE_ENV=development pnpm install --frozen-lockfile
 
 COPY ui/ ./ui/
-RUN cd ui && pnpm build
-# Built output lands in ui/dist — NestJS will serve it as static files
+RUN cd ui && rm -f pnpm-workspace.yaml && pnpm build
 
 # ---------------------------------------------------------------------------
 # Backend — build NestJS
 # ---------------------------------------------------------------------------
-COPY api/package.json api/pnpm-lock.yaml ./api/
-RUN cd api && pnpm install --frozen-lockfile
+COPY api/package.json api/pnpm-lock.yaml api/pnpm-workspace.yaml ./api/
+RUN cd api && rm -f pnpm-workspace.yaml \
+    && NODE_ENV=development pnpm install --frozen-lockfile
 
 COPY api/ ./api/
 
-# Copy built frontend into NestJS public dir so it's served at /
+# Копируем собранный фронт в api/public — NestJS сервит его как статику
 RUN mkdir -p api/public && cp -r ui/dist/. api/public/
 
-RUN cd api && pnpm build
+RUN cd api && rm -f pnpm-workspace.yaml && pnpm build
 
 # ---------------------------------------------------------------------------
-# Workspace directories (will be shadowed by volume mounts on RunPod)
+# Data directories — перекрываются volume mount'ами при запуске
+# Нужны чтобы контейнер стартовал без ошибок если volume не примонтирован
 # ---------------------------------------------------------------------------
 RUN mkdir -p \
-    /workspace/models \
-    /workspace/datasets \
-    /workspace/outputs \
-    /workspace/logs \
-    /workspace/temp \
-    /workspace/gendojo
+    /app/models \
+    /app/datasets \
+    /app/outputs \
+    /app/logs \
+    /app/temp \
+    /app/gendojo
 
 # ---------------------------------------------------------------------------
 # Entrypoint
@@ -99,8 +121,5 @@ COPY start.sh /app/start.sh
 RUN chmod +x /app/start.sh
 
 EXPOSE 3000
-
-# HEALTHCHECK --interval=30s --timeout=10s --start-period=20s --retries=3 \
-#     CMD curl -f http://localhost:3000/api/health || exit 1
 
 CMD ["/app/start.sh"]
