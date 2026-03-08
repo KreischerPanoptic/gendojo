@@ -23,8 +23,9 @@ function getToken(): string | null {
 export function getJobsSocket(): Socket {
   if (socket?.connected) return socket
 
-  const baseURL =
-    ((import.meta.env.VITE_API_URL as string | undefined) ?? 'http://localhost:3001') + '/api'
+  const baseURL = (import.meta.env.DEV
+  ? (import.meta.env.VITE_API_URL as string | undefined) ?? 'http://localhost:3000'
+  : '') + '/api'
 
   const token = getToken()
 

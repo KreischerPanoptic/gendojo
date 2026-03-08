@@ -1,10 +1,10 @@
 {
   "paths": {
-    "models": "/workspace/models",
-    "datasets": "/workspace/datasets",
-    "outputs": "/workspace/outputs",
-    "logs": "/workspace/logs",
-    "sdScripts": "/workspace/sd-scripts"
+    "models": "/app/models",
+    "datasets": "/app/datasets",
+    "outputs": "/app/outputs",
+    "logs": "/app/logs",
+    "sdScripts": "/app/sd-scripts"
   },
   "training": {
     "maxConcurrentJobs": 1,

@@ -3,7 +3,7 @@
 # Base: RunPod PyTorch image (PyTorch 2.4.0 + Python 3.11 + CUDA 12.4.1)
 # =============================================================================
 
-FROM runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04
+FROM runpod/pytorch:1.0.2-cu1281-torch280-ubuntu2404
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONDONTWRITEBYTECODE=1

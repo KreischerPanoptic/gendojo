@@ -21,7 +21,9 @@ const getToken = (): string | null => {
 }
 
 const getBaseURL = (): string =>
-  ((import.meta.env.VITE_API_URL as string | undefined) ?? 'http://localhost:3000') + '/api'
+  (import.meta.env.DEV
+  ? (import.meta.env.VITE_API_URL as string | undefined) ?? 'http://localhost:3000'
+  : '') + '/api';
 
 /**
  * Generic XHR upload with optional progress tracking.
@@ -219,9 +221,7 @@ export const datasetsApi = {
    * @param filename    - Image filename (e.g. "cat_001.jpg")
    */
   getImageUrl: (datasetName: string, filename: string): string => {
-    const base =
-      ((import.meta.env.VITE_API_URL as string | undefined) ?? 'http://localhost:3000') + '/api'
-    return `${base}/datasets/${encodeURIComponent(datasetName)}/images/${encodeURIComponent(filename)}`
+    return `${getBaseURL()}/datasets/${encodeURIComponent(datasetName)}/images/${encodeURIComponent(filename)}`
   },
 
   /**
