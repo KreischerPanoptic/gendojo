@@ -14,9 +14,6 @@ datasets/*
 outputs/*
 !outputs/.gitkeep
 
-docs/*
-!docs/.gitkeep
-
 # Training temp files
 tmp/
 /tmp/jobs/
