@@ -18,8 +18,9 @@ import { Route as AuthenticatedModelsIndexRouteImport } from './routes/_authenti
 import { Route as AuthenticatedJobsIndexRouteImport } from './routes/_authenticated/jobs/index'
 import { Route as AuthenticatedDatasetsIndexRouteImport } from './routes/_authenticated/datasets/index'
 import { Route as AuthenticatedJobsNewRouteImport } from './routes/_authenticated/jobs/new'
-import { Route as AuthenticatedJobsIdRouteImport } from './routes/_authenticated/jobs/$id'
 import { Route as AuthenticatedDatasetsUploadRouteImport } from './routes/_authenticated/datasets/upload'
+import { Route as AuthenticatedJobsIdIndexRouteImport } from './routes/_authenticated/jobs/$id/index'
+import { Route as AuthenticatedJobsIdOutputsRouteImport } from './routes/_authenticated/jobs/$id/outputs'
 import { Route as AuthenticatedDatasetsViewDatasetNameRouteImport } from './routes/_authenticated/datasets/view/$datasetName'
 import { Route as AuthenticatedDatasetsEditDatasetNameRouteImport } from './routes/_authenticated/datasets/edit/$datasetName'
 import { Route as AuthenticatedModelsDownloadHfIndexRouteImport } from './routes/_authenticated/models/download/hf/index'
@@ -70,15 +71,22 @@ const AuthenticatedJobsNewRoute = AuthenticatedJobsNewRouteImport.update({
   path: '/jobs/new',
   getParentRoute: () => AuthenticatedRoute,
 } as any)
-const AuthenticatedJobsIdRoute = AuthenticatedJobsIdRouteImport.update({
-  id: '/jobs/$id',
-  path: '/jobs/$id',
-  getParentRoute: () => AuthenticatedRoute,
-} as any)
 const AuthenticatedDatasetsUploadRoute =
   AuthenticatedDatasetsUploadRouteImport.update({
     id: '/datasets/upload',
     path: '/datasets/upload',
+    getParentRoute: () => AuthenticatedRoute,
+  } as any)
+const AuthenticatedJobsIdIndexRoute =
+  AuthenticatedJobsIdIndexRouteImport.update({
+    id: '/jobs/$id/',
+    path: '/jobs/$id/',
+    getParentRoute: () => AuthenticatedRoute,
+  } as any)
+const AuthenticatedJobsIdOutputsRoute =
+  AuthenticatedJobsIdOutputsRouteImport.update({
+    id: '/jobs/$id/outputs',
+    path: '/jobs/$id/outputs',
     getParentRoute: () => AuthenticatedRoute,
   } as any)
 const AuthenticatedDatasetsViewDatasetNameRoute =
@@ -104,7 +112,6 @@ export interface FileRoutesByFullPath {
   '/': typeof AuthenticatedIndexRoute
   '/login': typeof AuthLoginRoute
   '/datasets/upload': typeof AuthenticatedDatasetsUploadRoute
-  '/jobs/$id': typeof AuthenticatedJobsIdRoute
   '/jobs/new': typeof AuthenticatedJobsNewRoute
   '/datasets/': typeof AuthenticatedDatasetsIndexRoute
   '/jobs/': typeof AuthenticatedJobsIndexRoute
@@ -112,13 +119,14 @@ export interface FileRoutesByFullPath {
   '/settings/': typeof AuthenticatedSettingsIndexRoute
   '/datasets/edit/$datasetName': typeof AuthenticatedDatasetsEditDatasetNameRoute
   '/datasets/view/$datasetName': typeof AuthenticatedDatasetsViewDatasetNameRoute
+  '/jobs/$id/outputs': typeof AuthenticatedJobsIdOutputsRoute
+  '/jobs/$id/': typeof AuthenticatedJobsIdIndexRoute
   '/models/download/hf/': typeof AuthenticatedModelsDownloadHfIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof AuthenticatedIndexRoute
   '/login': typeof AuthLoginRoute
   '/datasets/upload': typeof AuthenticatedDatasetsUploadRoute
-  '/jobs/$id': typeof AuthenticatedJobsIdRoute
   '/jobs/new': typeof AuthenticatedJobsNewRoute
   '/datasets': typeof AuthenticatedDatasetsIndexRoute
   '/jobs': typeof AuthenticatedJobsIndexRoute
@@ -126,6 +134,8 @@ export interface FileRoutesByTo {
   '/settings': typeof AuthenticatedSettingsIndexRoute
   '/datasets/edit/$datasetName': typeof AuthenticatedDatasetsEditDatasetNameRoute
   '/datasets/view/$datasetName': typeof AuthenticatedDatasetsViewDatasetNameRoute
+  '/jobs/$id/outputs': typeof AuthenticatedJobsIdOutputsRoute
+  '/jobs/$id': typeof AuthenticatedJobsIdIndexRoute
   '/models/download/hf': typeof AuthenticatedModelsDownloadHfIndexRoute
 }
 export interface FileRoutesById {
@@ -135,7 +145,6 @@ export interface FileRoutesById {
   '/_auth/login': typeof AuthLoginRoute
   '/_authenticated/': typeof AuthenticatedIndexRoute
   '/_authenticated/datasets/upload': typeof AuthenticatedDatasetsUploadRoute
-  '/_authenticated/jobs/$id': typeof AuthenticatedJobsIdRoute
   '/_authenticated/jobs/new': typeof AuthenticatedJobsNewRoute
   '/_authenticated/datasets/': typeof AuthenticatedDatasetsIndexRoute
   '/_authenticated/jobs/': typeof AuthenticatedJobsIndexRoute
@@ -143,6 +152,8 @@ export interface FileRoutesById {
   '/_authenticated/settings/': typeof AuthenticatedSettingsIndexRoute
   '/_authenticated/datasets/edit/$datasetName': typeof AuthenticatedDatasetsEditDatasetNameRoute
   '/_authenticated/datasets/view/$datasetName': typeof AuthenticatedDatasetsViewDatasetNameRoute
+  '/_authenticated/jobs/$id/outputs': typeof AuthenticatedJobsIdOutputsRoute
+  '/_authenticated/jobs/$id/': typeof AuthenticatedJobsIdIndexRoute
   '/_authenticated/models/download/hf/': typeof AuthenticatedModelsDownloadHfIndexRoute
 }
 export interface FileRouteTypes {
@@ -151,7 +162,6 @@ export interface FileRouteTypes {
     | '/'
     | '/login'
     | '/datasets/upload'
-    | '/jobs/$id'
     | '/jobs/new'
     | '/datasets/'
     | '/jobs/'
@@ -159,13 +169,14 @@ export interface FileRouteTypes {
     | '/settings/'
     | '/datasets/edit/$datasetName'
     | '/datasets/view/$datasetName'
+    | '/jobs/$id/outputs'
+    | '/jobs/$id/'
     | '/models/download/hf/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
     | '/login'
     | '/datasets/upload'
-    | '/jobs/$id'
     | '/jobs/new'
     | '/datasets'
     | '/jobs'
@@ -173,6 +184,8 @@ export interface FileRouteTypes {
     | '/settings'
     | '/datasets/edit/$datasetName'
     | '/datasets/view/$datasetName'
+    | '/jobs/$id/outputs'
+    | '/jobs/$id'
     | '/models/download/hf'
   id:
     | '__root__'
@@ -181,7 +194,6 @@ export interface FileRouteTypes {
     | '/_auth/login'
     | '/_authenticated/'
     | '/_authenticated/datasets/upload'
-    | '/_authenticated/jobs/$id'
     | '/_authenticated/jobs/new'
     | '/_authenticated/datasets/'
     | '/_authenticated/jobs/'
@@ -189,6 +201,8 @@ export interface FileRouteTypes {
     | '/_authenticated/settings/'
     | '/_authenticated/datasets/edit/$datasetName'
     | '/_authenticated/datasets/view/$datasetName'
+    | '/_authenticated/jobs/$id/outputs'
+    | '/_authenticated/jobs/$id/'
     | '/_authenticated/models/download/hf/'
   fileRoutesById: FileRoutesById
 }
@@ -262,18 +276,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedJobsNewRouteImport
       parentRoute: typeof AuthenticatedRoute
     }
-    '/_authenticated/jobs/$id': {
-      id: '/_authenticated/jobs/$id'
-      path: '/jobs/$id'
-      fullPath: '/jobs/$id'
-      preLoaderRoute: typeof AuthenticatedJobsIdRouteImport
-      parentRoute: typeof AuthenticatedRoute
-    }
     '/_authenticated/datasets/upload': {
       id: '/_authenticated/datasets/upload'
       path: '/datasets/upload'
       fullPath: '/datasets/upload'
       preLoaderRoute: typeof AuthenticatedDatasetsUploadRouteImport
+      parentRoute: typeof AuthenticatedRoute
+    }
+    '/_authenticated/jobs/$id/': {
+      id: '/_authenticated/jobs/$id/'
+      path: '/jobs/$id'
+      fullPath: '/jobs/$id/'
+      preLoaderRoute: typeof AuthenticatedJobsIdIndexRouteImport
+      parentRoute: typeof AuthenticatedRoute
+    }
+    '/_authenticated/jobs/$id/outputs': {
+      id: '/_authenticated/jobs/$id/outputs'
+      path: '/jobs/$id/outputs'
+      fullPath: '/jobs/$id/outputs'
+      preLoaderRoute: typeof AuthenticatedJobsIdOutputsRouteImport
       parentRoute: typeof AuthenticatedRoute
     }
     '/_authenticated/datasets/view/$datasetName': {
@@ -313,7 +334,6 @@ const AuthRouteWithChildren = AuthRoute._addFileChildren(AuthRouteChildren)
 interface AuthenticatedRouteChildren {
   AuthenticatedIndexRoute: typeof AuthenticatedIndexRoute
   AuthenticatedDatasetsUploadRoute: typeof AuthenticatedDatasetsUploadRoute
-  AuthenticatedJobsIdRoute: typeof AuthenticatedJobsIdRoute
   AuthenticatedJobsNewRoute: typeof AuthenticatedJobsNewRoute
   AuthenticatedDatasetsIndexRoute: typeof AuthenticatedDatasetsIndexRoute
   AuthenticatedJobsIndexRoute: typeof AuthenticatedJobsIndexRoute
@@ -321,13 +341,14 @@ interface AuthenticatedRouteChildren {
   AuthenticatedSettingsIndexRoute: typeof AuthenticatedSettingsIndexRoute
   AuthenticatedDatasetsEditDatasetNameRoute: typeof AuthenticatedDatasetsEditDatasetNameRoute
   AuthenticatedDatasetsViewDatasetNameRoute: typeof AuthenticatedDatasetsViewDatasetNameRoute
+  AuthenticatedJobsIdOutputsRoute: typeof AuthenticatedJobsIdOutputsRoute
+  AuthenticatedJobsIdIndexRoute: typeof AuthenticatedJobsIdIndexRoute
   AuthenticatedModelsDownloadHfIndexRoute: typeof AuthenticatedModelsDownloadHfIndexRoute
 }
 
 const AuthenticatedRouteChildren: AuthenticatedRouteChildren = {
   AuthenticatedIndexRoute: AuthenticatedIndexRoute,
   AuthenticatedDatasetsUploadRoute: AuthenticatedDatasetsUploadRoute,
-  AuthenticatedJobsIdRoute: AuthenticatedJobsIdRoute,
   AuthenticatedJobsNewRoute: AuthenticatedJobsNewRoute,
   AuthenticatedDatasetsIndexRoute: AuthenticatedDatasetsIndexRoute,
   AuthenticatedJobsIndexRoute: AuthenticatedJobsIndexRoute,
@@ -337,6 +358,8 @@ const AuthenticatedRouteChildren: AuthenticatedRouteChildren = {
     AuthenticatedDatasetsEditDatasetNameRoute,
   AuthenticatedDatasetsViewDatasetNameRoute:
     AuthenticatedDatasetsViewDatasetNameRoute,
+  AuthenticatedJobsIdOutputsRoute: AuthenticatedJobsIdOutputsRoute,
+  AuthenticatedJobsIdIndexRoute: AuthenticatedJobsIdIndexRoute,
   AuthenticatedModelsDownloadHfIndexRoute:
     AuthenticatedModelsDownloadHfIndexRoute,
 }

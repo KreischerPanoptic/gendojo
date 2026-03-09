@@ -45,7 +45,56 @@ export interface JobDetail extends JobSummary {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Create job request — two modes (datasetRef or full dataset DTO)
+// Sample image generation
+//
+// Maps to sd-scripts --sample_prompts / --sample_every_n_epochs options.
+// Prompt format written to prompts file:
+//   <activationToken><sep><prompt> --d <seed> --w <w> --h <h> --s <steps> --c <cfg> [--n <neg>]
+// where sep = ". " (natural) or ", " (tags)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface SamplePromptInput {
+  /** Prompt text. The activation token is prepended by the backend (unless withoutToken=true) */
+  prompt: string
+  /** --n  Negative prompt */
+  negativePrompt?: string
+  /** --d  Seed */
+  seed?: number
+  /** --w  Width in pixels */
+  width?: number
+  /** --h  Height in pixels */
+  height?: number
+  /** --s  Number of sampling steps */
+  steps?: number
+  /** --c  CFG / guidance scale */
+  cfg?: number
+  /**
+   * When true, the activation token is NOT prepended to this prompt.
+   * Useful for a "clean" comparison image that shows model behaviour before the token.
+   */
+  withoutToken?: boolean
+}
+
+export interface SampleImagesConfig {
+  prompts: SamplePromptInput[]
+  /** Token prepended to all prompts where withoutToken is falsy */
+  activationToken?: string
+  /**
+   * How the token is joined to the prompt text.
+   * - natural: "token. Prompt…"
+   * - tags:    "token, prompt…"
+   */
+  captionStyle?: 'natural' | 'tags'
+  /** Generate every N epochs (default: 1). Mutually exclusive with every_n_steps. */
+  every_n_epochs?: number
+  /** Generate every N steps. Mutually exclusive with every_n_epochs. */
+  every_n_steps?: number
+  /** Sampler passed to gen_img. Default: euler_a */
+  sampler?: string
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Create job request — two modes
 // ─────────────────────────────────────────────────────────────────────────────
 
 export interface DatasetRefOptions {
@@ -70,6 +119,8 @@ export interface CreateJobByRefRequest {
   train: TrainConfig
   datasetRef: string
   datasetOptions?: DatasetRefOptions
+  /** Optional: generate sample images at checkpoints during training */
+  sampleImages?: SampleImagesConfig
 }
 
 /**
@@ -78,30 +129,28 @@ export interface CreateJobByRefRequest {
 export interface CreateJobByDtoRequest {
   train: TrainConfig
   dataset: FullDatasetDto
+  /** Optional: generate sample images at checkpoints during training */
+  sampleImages?: SampleImagesConfig
 }
 
 export type CreateJobRequest = CreateJobByRefRequest | CreateJobByDtoRequest
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Train config — core parameters shared across architectures
-// See toml/dto/train-toml.dto.ts for the full list
+// Train config
 // ─────────────────────────────────────────────────────────────────────────────
 
-export type ModelArchitecture = 'sd1' | 'sd2' | 'sdxl' | 'flux' | 'sd3' | 'anima' | 'lumina' | 'hunyuan' | 'chroma'
+export type ModelArchitecture =
+  | 'sd1' | 'sd2' | 'sdxl' | 'flux' | 'sd3' | 'anima' | 'lumina' | 'hunyuan' | 'chroma'
 
 export interface TrainConfig {
   arch: ModelArchitecture
-  /** Human-readable run name — used as output filename */
   output_name: string
   pretrained_model_name_or_path: string
-  /** Optional, defaults to /workspace/outputs */
   output_dir?: string
 
-  // LoRA network
   network_dim?: number
   network_alpha?: number
 
-  // Training loop
   max_train_steps?: number
   max_train_epochs?: number
   learning_rate?: number
@@ -110,16 +159,16 @@ export interface TrainConfig {
   lr_scheduler?: string
   lr_warmup_steps?: number
 
-  // Sampling / checkpointing
   save_every_n_epochs?: number
   save_every_n_steps?: number
   save_last_n_epochs?: number
 
-  // Precision
   mixed_precision?: 'no' | 'fp16' | 'bf16'
   save_precision?: 'float' | 'fp16' | 'bf16'
 
-  // Optional extras passed through to the training script
+  // dataset_config injected by JobsService at submission time
+  dataset_config?: string
+
   [key: string]: unknown
 }
 
@@ -137,7 +186,7 @@ export interface FullDatasetDto {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Kill response
+// Response shapes
 // ─────────────────────────────────────────────────────────────────────────────
 
 export interface KillJobResponse {
@@ -145,16 +194,12 @@ export interface KillJobResponse {
   status: JobStatus
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Logs response
-// ─────────────────────────────────────────────────────────────────────────────
-
 export interface JobLogsResponse {
   logs: LogLine[]
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Socket.IO event shapes (consumed in useJobSocket hook)
+// Socket.IO event shapes
 // ─────────────────────────────────────────────────────────────────────────────
 
 export interface JobLogEvent {

@@ -14,6 +14,7 @@ import {
   IconTerminal2,
   IconClockHour4,
   IconAlertTriangle,
+  IconDatabase,
 } from '@tabler/icons-react'
 import type { DataTableColumn } from 'mantine-datatable'
 import { DataTable } from 'mantine-datatable'
@@ -79,13 +80,14 @@ function formatDate(iso?: string): string {
 
 interface JobsTableProps {
   onView: (job: JobSummary) => void
+  onViewOutputs: (job: JobSummary) => void
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Component
 // ─────────────────────────────────────────────────────────────────────────────
 
-export default function JobsTable({ onView }: JobsTableProps) {
+export default function JobsTable({ onView, onViewOutputs }: JobsTableProps) {
   const { showContextMenu, hideContextMenu } = useContextMenu()
   const [selectedRecords, setSelectedRecords] = useState<JobSummary[]>([])
 
@@ -215,6 +217,19 @@ export default function JobsTable({ onView }: JobsTableProps) {
                 }}
               >
                 <IconEye size={14} />
+              </ActionIcon>
+            </Tooltip>
+            <Tooltip label="View outputs" withArrow>
+              <ActionIcon
+                size="sm"
+                variant="subtle"
+                color="gray"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  onViewOutputs(job)
+                }}
+              >
+                <IconDatabase size={14} />
               </ActionIcon>
             </Tooltip>
             <Tooltip label={isActive(job.status) ? 'Kill job' : 'Already finished'} withArrow>

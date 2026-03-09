@@ -19,6 +19,7 @@ import {
 import { useDisclosure } from '@mantine/hooks'
 import {
   IconAlertTriangle,
+  IconArrowDown,
   IconArrowLeft,
   IconCheck,
   IconCircleCheck,
@@ -26,18 +27,19 @@ import {
   IconCopy,
   IconDatabase,
   IconFileText,
+  IconLayersSubtract,
   IconPlayerStop,
-  IconRefresh,
   IconTerminal2,
   IconWifi,
   IconWifiOff,
   IconX,
 } from '@tabler/icons-react'
-import { useEffect, useRef, useState, useMemo } from 'react'
+import { useCallback, useEffect, useRef, useState, useMemo } from 'react'
 import { useNavigate, useParams } from '@tanstack/react-router'
 
 import type { JobStatus, LogLine } from '@services/jobs'
 import { useJob, useKillJob, useJobSocket } from '@services/jobs'
+import { useJobOutputs } from '@services/jobs/outputs'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Status helpers
@@ -225,7 +227,7 @@ function LiveDuration({ startedAt, finishedAt, status }: {
 // ─────────────────────────────────────────────────────────────────────────────
 
 export default function JobDetailPage() {
-  const { id } = useParams({ from: '/_authenticated/jobs/$id' })
+  const { id } = useParams({ from: '/_authenticated/jobs/$id/' })
   const navigate = useNavigate()
 
   const { data: job, isLoading } = useJob(id)
@@ -233,6 +235,9 @@ export default function JobDetailPage() {
   const [killModalOpen, { open: openKill, close: closeKill }] = useDisclosure(false)
 
   const isTerminal = job?.status === 'done' || job?.status === 'failed' || job?.status === 'killed'
+
+  // Poll outputs only when terminal (no need to hammer during training)
+  const { data: outputs } = useJobOutputs(id, isTerminal, 30_000)
 
   // ── Socket live logs ────────────────────────────────────────────────────────
   const { logs: socketLogs, isConnected } = useJobSocket({
@@ -246,21 +251,40 @@ export default function JobDetailPage() {
     : socketLogs
 
   // ── Auto-scroll ─────────────────────────────────────────────────────────────
-  const scrollRef    = useRef<HTMLDivElement>(null)
+  //
+  // scrollRef → the ScrollArea *viewport* (the actual scrolling div).
+  // onScrollCapture fires on the wrapper element — so we read scrollRef.current
+  // directly instead of e.currentTarget (they are different DOM nodes).
+  //
+  // pinned=true  → auto-jump to bottom on every new line (instant, no smooth jitter)
+  // pinned=false → user scrolled up; show "Jump to bottom" button
+  //
+  const scrollRef     = useRef<HTMLDivElement>(null)
+  const prevLenRef    = useRef(0)
   const [pinned, setPinned] = useState(true)
 
   useEffect(() => {
-    if (pinned && scrollRef.current) {
-      scrollRef.current.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' })
-    }
+    if (!pinned) return
+    const el = scrollRef.current
+    if (!el || logs.length === prevLenRef.current) return
+    prevLenRef.current = logs.length
+    el.scrollTop = el.scrollHeight          // instant — smooth causes lag on live tailing
   }, [logs.length, pinned])
 
-  // Detect manual scroll-up to unpin
-  const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
-    const el = e.currentTarget
+  // Detect manual scroll — unpin when user scrolls away from bottom
+  const handleScroll = useCallback(() => {
+    const el = scrollRef.current
+    if (!el) return
     const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 40
     setPinned(atBottom)
-  }
+  }, [])
+
+  const scrollToBottom = useCallback(() => {
+    const el = scrollRef.current
+    if (!el) return
+    el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' })
+    setPinned(true)
+  }, [])
 
   // ── Log text for copy ────────────────────────────────────────────────────────
   const logText = useMemo(() => logs.map(l => l.text).join('\n'), [logs])
@@ -353,6 +377,26 @@ export default function JobDetailPage() {
                 </Tooltip>
               )}
 
+              {/* Outputs button — visible when terminal */}
+              {isTerminal && (
+                <Button
+                  variant="light"
+                  color="blue"
+                  size="sm"
+                  leftSection={<IconLayersSubtract size={14} />}
+                  onClick={() => void navigate({ to: '/jobs/$id/outputs', params: { id } })}
+                  rightSection={
+                    outputs && outputs.checkpoints.length > 0 ? (
+                      <Badge size="xs" variant="filled" color="blue" circle>
+                        {outputs.checkpoints.length}
+                      </Badge>
+                    ) : undefined
+                  }
+                >
+                  Outputs
+                </Button>
+              )}
+
               {/* Kill button — only for running/pending */}
               {!isTerminal && (
                 <Button
@@ -382,18 +426,26 @@ export default function JobDetailPage() {
 
         {/* ── Body ──────────────────────────────────────────────────────────── */}
         <Group
-          align="start" gap="lg" p="lg"
-          style={{ flex: 1, overflow: 'hidden', flexWrap: 'nowrap' }}
+          gap="lg" p="lg"
+          style={{
+            flex: 1,
+            minHeight: 0,          // flex-потомок Stack — без этого не сжимается
+            overflow: 'hidden',
+            flexWrap: 'nowrap',
+            alignItems: 'stretch', // дети растягиваются на всю высоту Group
+          }}
         >
 
           {/* ── Log terminal (left, grows) ──────────────────────────────────── */}
           <Paper
             withBorder radius="md"
             style={{
-              flex: '1 1 0%', minWidth: 0,
-              display: 'flex', flexDirection: 'column',
+              flex: '1 1 0',
+              minWidth: 0,
+              minHeight: 0,          // без этого Paper растёт до размера контента
+              display: 'flex',
+              flexDirection: 'column',
               overflow: 'hidden',
-              height: '100%',
               background: 'var(--mantine-color-dark-8, #1a1b1e)',
             }}
           >
@@ -406,26 +458,13 @@ export default function JobDetailPage() {
               }}
             >
               <IconTerminal2 size={13} color="var(--mantine-color-dimmed)" />
-              <Text size="xs" c="dimmed" style={{ flex: 1 }}>
+              <Text size="xs" c="dimmed" style={{ flex: 1 }} truncate>
                 {job.logFilePath}
               </Text>
 
-              <Text size="xs" c="dimmed">
+              <Text size="xs" c="dimmed" style={{ flexShrink: 0 }}>
                 {logs.length} lines
               </Text>
-
-              {/* Scroll-to-bottom */}
-              {!pinned && (
-                <Tooltip label="Scroll to bottom">
-                  <ActionIcon size="xs" variant="subtle" color="blue"
-                    onClick={() => {
-                      setPinned(true)
-                      scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' })
-                    }}>
-                    <IconRefresh size={11} />
-                  </ActionIcon>
-                </Tooltip>
-              )}
 
               {/* Copy logs */}
               <CopyButton value={logText} timeout={1500}>
@@ -439,27 +478,60 @@ export default function JobDetailPage() {
               </CopyButton>
             </Group>
 
-            {/* Log lines */}
-            <ScrollArea
-              viewportRef={scrollRef}
-              onScrollCapture={handleScroll}
-              style={{ flex: 1 }}
-              p="xs"
-            >
-              {logs.length === 0 ? (
-                <Text size="xs" c="dimmed" p="sm">
-                  {job.status === 'pending'
-                    ? 'Waiting for process to start…'
-                    : 'No output yet.'}
-                </Text>
-              ) : (
-                <Box component="div">
-                  {logs.map((line, i) => (
-                    <LogLineItem key={i} line={line} />
-                  ))}
+            {/* Log lines — scroll-контейнер.
+                flex:'1 1 0' + minHeight:0 — стандартный приём для flex-потомка,
+                которому нужно заполнить оставшееся место и уметь скроллиться.
+                styles.viewport пробрасывает height:'100%' внутрь Mantine ScrollArea
+                (внешний wrapper ≠ внутренний viewport). */}
+            <Box style={{ flex: '1 1 0', minHeight: 0, position: 'relative' }}>
+              <ScrollArea
+                viewportRef={scrollRef}
+                onScrollCapture={handleScroll}
+                h="100%"
+                scrollbarSize={6}
+                styles={{ viewport: { height: '100%' } }}
+              >
+                {logs.length === 0 ? (
+                  <Text size="xs" c="dimmed" p="sm">
+                    {job.status === 'pending'
+                      ? 'Waiting for process to start…'
+                      : 'No output yet.'}
+                  </Text>
+                ) : (
+                  <Box component="div" pb={4}>
+                    {logs.map((line, i) => (
+                      <LogLineItem key={i} line={line} />
+                    ))}
+                  </Box>
+                )}
+              </ScrollArea>
+
+              {/* Jump-to-bottom button — floats over the log when unpinned */}
+              {!pinned && (
+                <Box
+                  style={{
+                    position: 'absolute',
+                    bottom: 12,
+                    right: 20,
+                    zIndex: 10,
+                  }}
+                >
+                  <Button
+                    size="compact-xs"
+                    variant="filled"
+                    color="blue"
+                    leftSection={<IconArrowDown size={11} />}
+                    onClick={scrollToBottom}
+                    style={{
+                      opacity: 0.92,
+                      boxShadow: '0 2px 8px rgba(0,0,0,0.4)',
+                    }}
+                  >
+                    Jump to bottom
+                  </Button>
                 </Box>
               )}
-            </ScrollArea>
+            </Box>
           </Paper>
 
           {/* ── Right panel: metadata ───────────────────────────────────────── */}
@@ -467,8 +539,7 @@ export default function JobDetailPage() {
             gap="sm"
             style={{
               flex: '0 0 320px',
-              height: '100%',
-              overflowY: 'auto',
+              overflowY: 'auto',   // скролл если метаданных много
             }}
           >
 

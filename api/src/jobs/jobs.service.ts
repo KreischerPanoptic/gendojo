@@ -20,6 +20,8 @@ import {
   JobDetail,
   CreateJobDto,
   DatasetRefOptions,
+  SampleImagesConfig,
+  SamplePromptInput,
   LogLine,
   LogStream,
   JobLogEvent,
@@ -45,8 +47,8 @@ export class JobsService extends EventEmitter implements OnModuleDestroy {
 
   // ── Dynamic settings ───────────────────────────────────────────────────────
 
-  private get maxConcurrentJobs():   number { return this.settings.getTraining().maxConcurrentJobs;   }
-  private get logBufferSize():       number { return this.settings.getTraining().logBufferSize;       }
+  private get maxConcurrentJobs():    number { return this.settings.getTraining().maxConcurrentJobs;   }
+  private get logBufferSize():        number { return this.settings.getTraining().logBufferSize;       }
   private get cpuThreadsPerProcess(): string { return String(this.settings.getTraining().cpuThreadsPerProcess); }
 
   // ── Lifecycle ──────────────────────────────────────────────────────────────
@@ -62,10 +64,10 @@ export class JobsService extends EventEmitter implements OnModuleDestroy {
   // ── Public API ─────────────────────────────────────────────────────────────
 
   async create(dto: CreateJobDto): Promise<JobDetail> {
-    // 1. Resolve dataset — either from ref or full DTO
+    // 1. Resolve dataset
     const { datasetDto, datasetName } = await this.resolveDataset(dto);
 
-    // 2. Enforce concurrency cap (cheap check, before any I/O)
+    // 2. Enforce concurrency cap
     const running = [...this.jobs.values()].filter(j => j.status === JobStatus.Running);
     if (running.length >= this.maxConcurrentJobs) {
       throw Object.assign(
@@ -74,28 +76,46 @@ export class JobsService extends EventEmitter implements OnModuleDestroy {
       );
     }
 
-    // 3. Generate job ID and compute all paths up-front.
-    //    jobId is just a UUID — no I/O needed here.
+    // 3. Generate job ID and compute all paths
     const jobId           = randomUUID();
     const jobDir          = this.paths.jobDir(jobId);
-    const jobTempDir      = this.paths.jobTempDir(jobId);
-    // TOML files live alongside the log in jobDir — one directory for all job artifacts
     const datasetTomlPath = path.join(jobDir, 'dataset.toml');
     const trainTomlPath   = path.join(jobDir, 'train.toml');
     const logFilePath     = path.join(jobDir, 'train.log');
 
-    // 4. Build enriched train DTO with runtime-injected fields.
-    //    output_dir defaults to <outputs>/<output_name> so each run gets its own subfolder.
-    //    dataset_config is required by the validator — inject before validation.
+    // 4. Resolve output_dir early — needed for outputDir record field and
+    //    sample_prompts injection into train config
     const outputName = dto.train.output_name || 'untitled';
-    const trainDto = {
+    const outputDir  = (dto.train.output_dir as string | undefined)
+      || path.join(this.paths.outputs, outputName);
+
+    // 5. Build enriched train DTO.
+    //    Inject dataset_config and output_dir, then sample params if configured.
+    let trainDto: Record<string, unknown> = {
       ...dto.train,
-      output_dir:     dto.train.output_dir || path.join(this.paths.outputs, outputName),
+      output_dir:     outputDir,
       dataset_config: datasetTomlPath,
     };
 
-    // 5. Validate enriched train config (both output_dir and dataset_config are now present)
-    const validation = validateTrainConfig(trainDto);
+    // 5a. Inject sample image params when sampleImages is provided
+    let samplePromptsPath: string | undefined;
+    if (dto.sampleImages && dto.sampleImages.prompts.length > 0) {
+      samplePromptsPath = path.join(jobDir, 'prompts.txt');
+      trainDto = {
+        ...trainDto,
+        sample_prompts: samplePromptsPath,
+        ...(dto.sampleImages.every_n_epochs !== undefined && {
+          sample_every_n_epochs: dto.sampleImages.every_n_epochs,
+        }),
+        ...(dto.sampleImages.every_n_steps !== undefined && {
+          sample_every_n_steps: dto.sampleImages.every_n_steps,
+        }),
+        sample_sampler: dto.sampleImages.sampler ?? 'euler_a',
+      };
+    }
+
+    // 6. Validate enriched train config
+    const validation = validateTrainConfig(trainDto as unknown as Parameters<typeof validateTrainConfig>[0]);
     if (!validation.valid) {
       const messages = validation.errors.map(e => `${e.field}: ${e.message}`).join('; ');
       throw Object.assign(
@@ -104,17 +124,25 @@ export class JobsService extends EventEmitter implements OnModuleDestroy {
       );
     }
 
-    // 6. Create job directory (only after validation passes — no orphaned dirs on 422)
-    //    All job artifacts (TOMLs + log) live in jobDir together.
+    // 7. Create job directory (only after validation — no orphaned dirs on 422)
     await fs.mkdir(jobDir, { recursive: true });
 
-    // 7. Resolve training script
+    // 8. Write prompts.txt if sampleImages configured
+    if (dto.sampleImages && samplePromptsPath) {
+      const promptsContent = this.formatPromptsFile(dto.sampleImages);
+      await fs.writeFile(samplePromptsPath, promptsContent, 'utf8');
+      this.logger.log(`Job ${jobId}: prompts.txt → ${samplePromptsPath}`);
+    }
+
+    // 9. Resolve training script
     const script     = this.toml.getTrainScript(dto.train.arch);
     const scriptPath = path.join(this.paths.sdScripts, script);
 
-    // 8. Generate and write TOML files
+    // 10. Generate and write TOML files
     const datasetTomlContent = this.toml.generateDatasetToml(datasetDto);
-    const trainTomlContent   = this.toml.generateTrainToml(trainDto);
+    const trainTomlContent   = this.toml.generateTrainToml(
+      trainDto as unknown as Parameters<typeof this.toml.generateTrainToml>[0],
+    );
 
     await fs.writeFile(datasetTomlPath, datasetTomlContent, 'utf8');
     await fs.writeFile(trainTomlPath,   trainTomlContent,   'utf8');
@@ -122,7 +150,7 @@ export class JobsService extends EventEmitter implements OnModuleDestroy {
     this.logger.log(`Job ${jobId}: dataset.toml → ${datasetTomlPath}`);
     this.logger.log(`Job ${jobId}: train.toml   → ${trainTomlPath}`);
 
-    // 9. Build display command string
+    // 11. Build display command string
     const command = [
       'accelerate', 'launch',
       '--config_file', this.paths.accelerateConfig,
@@ -131,7 +159,7 @@ export class JobsService extends EventEmitter implements OnModuleDestroy {
       '--config_file', trainTomlPath,
     ].join(' ');
 
-    // 10. Register job record
+    // 12. Register job record
     const job: TrainingJob = {
       id: jobId,
       name: dto.train.output_name,
@@ -146,6 +174,8 @@ export class JobsService extends EventEmitter implements OnModuleDestroy {
       status: JobStatus.Pending,
       logBuffer: [],
       createdAt: new Date().toISOString(),
+      outputDir,
+      samplePromptsPath,
     };
     this.jobs.set(jobId, job);
 
@@ -163,6 +193,10 @@ export class JobsService extends EventEmitter implements OnModuleDestroy {
     return job ? this.toDetail(job) : undefined;
   }
 
+  getRaw(id: string): TrainingJob | undefined {
+    return this.jobs.get(id);
+  }
+
   getLogs(id: string): LogLine[] | undefined {
     return this.jobs.get(id)?.logBuffer;
   }
@@ -172,47 +206,88 @@ export class JobsService extends EventEmitter implements OnModuleDestroy {
     if (!job || job.status !== JobStatus.Running) return false;
 
     const proc = this.processes.get(id);
-    if (!proc) return false;
+    if (!proc || proc.pid === undefined) return false;
 
-    this.logger.log(`Killing job ${id} (PID ${proc.pid})`);
-    proc.kill('SIGTERM');
+    // Mark as killed BEFORE sending signal — the 'close' handler checks this
+    // and must not overwrite it with 'failed' after a user-initiated kill.
+    job.status = JobStatus.Killed;
+    this.emit('job:status', { jobId: id, status: JobStatus.Killed } as JobStatusEvent);
 
+    const pgid = proc.pid;
+    this.logger.log(`Killing job ${id} (PID ${pgid}, process group -${pgid})`);
+
+    try {
+      // Kill entire process group: accelerate + all its Python children
+      process.kill(-pgid, 'SIGTERM');
+    } catch (err) {
+      // Process may have already exited between the guard check and here
+      this.logger.warn(`SIGTERM to process group -${pgid} failed: ${(err as Error).message}`);
+      return false;
+    }
+
+    // Give SIGTERM 5 s to clean up, then force-kill
     await new Promise<void>(resolve => setTimeout(resolve, 5000));
+
     if (this.processes.has(id)) {
-      proc.kill('SIGKILL');
+      this.logger.warn(`Job ${id}: still alive after 5 s — sending SIGKILL to group -${pgid}`);
+      try {
+        process.kill(-pgid, 'SIGKILL');
+      } catch {
+        // Already gone — fine
+      }
     }
 
     return true;
   }
 
-  // ── Dataset resolution ────────────────────────────────────────────────────
+  // ── Sample prompts serialisation ──────────────────────────────────────────
 
   /**
-   * Resolve CreateJobDto to a concrete DatasetTomlDto.
+   * Format SampleImagesConfig into prompts.txt content for sd-scripts.
    *
-   * Mode 1 — datasetRef:
-   *   - Fetch dataset detail from DatasetsService (throws 404 if missing)
-   *   - Assert imageCount > 0 (throw 422 if empty)
-   *   - Warn (log) if captionCoverage < 1.0 so the user knows some images
-   *     will use class_tokens fallback
-   *   - Build a minimal but complete DatasetTomlDto
-   *
-   * Mode 2 — full dataset DTO:
-   *   - Pass through unchanged; caller is responsible for correct paths
+   * Output format (one line per prompt):
+   *   token. Prompt text --d 42 --w 1216 --h 832 --s 28 --c 7.0 --n negative
    */
+  private formatPromptsFile(config: SampleImagesConfig): string {
+    const { prompts, activationToken, captionStyle = 'natural' } = config;
+    const sep = captionStyle === 'natural' ? '. ' : ', ';
+
+    const lines = prompts.map(p => {
+      const parts: string[] = [];
+
+      // Build prompt text — prepend activation token unless withoutToken=true
+      let promptText = p.prompt;
+      if (activationToken && !p.withoutToken) {
+        promptText = `${activationToken}${sep}${p.prompt}`;
+      }
+      parts.push(promptText);
+
+      // Append sd-scripts inline flags
+      if (p.seed      !== undefined) parts.push(`--d ${p.seed}`);
+      if (p.width     !== undefined) parts.push(`--w ${p.width}`);
+      if (p.height    !== undefined) parts.push(`--h ${p.height}`);
+      if (p.steps     !== undefined) parts.push(`--s ${p.steps}`);
+      if (p.cfg       !== undefined) parts.push(`--c ${p.cfg}`);
+      if (p.negativePrompt)          parts.push(`--n ${p.negativePrompt}`);
+
+      return parts.join(' ');
+    });
+
+    return lines.join('\n') + '\n';
+  }
+
+  // ── Dataset resolution ────────────────────────────────────────────────────
+
   private async resolveDataset(dto: CreateJobDto): Promise<{
     datasetDto: DatasetTomlDto;
     datasetName: string | undefined;
   }> {
-    // ── Mode 2: full DTO provided ────────────────────────────────────────────
     if (dto.dataset) {
       return { datasetDto: dto.dataset, datasetName: undefined };
     }
 
-    // ── Mode 1: datasetRef ───────────────────────────────────────────────────
     const { datasetRef, datasetOptions = {} } = dto;
 
-    // Throws NotFoundException (wrapped to 422 below) if the directory is missing
     let detail: Awaited<ReturnType<DatasetsService['getOne']>>;
     try {
       detail = await this.datasets.getOne(datasetRef);
@@ -255,10 +330,6 @@ export class JobsService extends EventEmitter implements OnModuleDestroy {
     return { datasetDto, datasetName: datasetRef };
   }
 
-  /**
-   * Build a minimal DatasetTomlDto from a resolved image_dir path and options.
-   * Defaults: 1024px, bucket enabled, batch_size 1.
-   */
   private buildDatasetDto(
     imageDir: string,
     opts: DatasetRefOptions,
@@ -315,22 +386,24 @@ export class JobsService extends EventEmitter implements OnModuleDestroy {
 
     const accelerateBin = process.env['ACCELERATE_BIN'] ?? 'accelerate';
 
-  this.logger.log(`[spawn] bin: ${accelerateBin}`);
-  this.logger.log(`[spawn] PATH: ${process.env['PATH']}`);
-  this.logger.log(`[spawn] cwd: ${this.paths.sdScripts}`);
-  this.logger.log(`[spawn] args: ${['launch', ...args].join(' ')}`);
+    this.logger.log(`[spawn] bin: ${accelerateBin}`);
+    this.logger.log(`[spawn] PATH: ${process.env['PATH']}`);
+    this.logger.log(`[spawn] cwd: ${this.paths.sdScripts}`);
+    this.logger.log(`[spawn] args: ${['launch', ...args].join(' ')}`);
 
-  // Проверяем что cwd существует
-  try {
-    require('fs').accessSync(this.paths.sdScripts);
-    this.logger.log(`[spawn] cwd exists: yes`);
-  } catch {
-    this.logger.error(`[spawn] cwd does NOT exist: ${this.paths.sdScripts}`);
-  }
+    try {
+      require('fs').accessSync(this.paths.sdScripts);
+      this.logger.log(`[spawn] cwd exists: yes`);
+    } catch {
+      this.logger.error(`[spawn] cwd does NOT exist: ${this.paths.sdScripts}`);
+    }
 
     const proc = spawn(accelerateBin, ['launch', ...args], {
       cwd: this.paths.sdScripts,
       env: { ...process.env },
+      // detached = true → Node creates a new process group (pgid = proc.pid)
+      // This is what makes `process.kill(-pgid, signal)` work to kill all children.
+      detached: true,
     });
 
     job.pid       = proc.pid;
@@ -352,7 +425,6 @@ export class JobsService extends EventEmitter implements OnModuleDestroy {
       if (!logStreamClosed) {
         this.appendLog(job, entry, logStream);
       } else {
-        // Stream already closed — still update in-memory buffer and emit WS event
         job.logBuffer.push(entry);
         if (job.logBuffer.length > this.logBufferSize) job.logBuffer.shift();
         this.emit('job:log', { jobId: job.id, line: entry } as JobLogEvent);
@@ -377,15 +449,15 @@ export class JobsService extends EventEmitter implements OnModuleDestroy {
       job.exitCode   = exitCode;
       job.finishedAt = new Date().toISOString();
 
+      // Do NOT overwrite Killed status — kill() already set it and emitted the event
       if (job.status !== JobStatus.Killed) {
         job.status = exitCode === 0 ? JobStatus.Done : JobStatus.Failed;
+        this.emit('job:status', { jobId: job.id, status: job.status, exitCode } as JobStatusEvent);
       }
 
       this.logger.log(
         `Job ${job.id} finished: status=${job.status}, exit=${exitCode}, signal=${signal ?? '-'}`,
       );
-
-      this.emit('job:status', { jobId: job.id, status: job.status, exitCode } as JobStatusEvent);
     });
 
     proc.on('error', (err: Error) => {
@@ -394,7 +466,6 @@ export class JobsService extends EventEmitter implements OnModuleDestroy {
       job.finishedAt = new Date().toISOString();
 
       this.logger.error(`Job ${job.id} process error: ${err.message}`);
-      // Write error to log before closing the stream
       safeAppendLog({ ts: Date.now(), stream: 'stderr', text: `[process error] ${err.message}` });
       safeEndStream();
 

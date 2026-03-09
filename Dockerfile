@@ -1,111 +1,150 @@
+# syntax=docker/dockerfile:1
 # =============================================================================
-# GenDojo — Docker image
-# Base: RunPod PyTorch image (PyTorch 2.4.0 + Python 3.11 + CUDA 12.4.1)
+# GenDojo — Multi-stage build
+#
+# Stage 1 (ui-builder):    node:20-slim  → React production bundle
+# Stage 2 (api-builder):   node:20-slim  → NestJS dist/ + prod node_modules
+# Stage 3 (runtime):       RunPod CUDA   → только артефакты из 1 и 2
+#
+# Что убирает multi-stage по сравнению с монолитным образом:
+#   - pnpm + npm глобальные пакеты (~100 MB)
+#   - devDependencies (TypeScript, Jest, ESLint, Vite...) (~400-700 MB)
+#   - Node.js build cache
+#   - Python pip cache (BuildKit cache mount — быстро, в образ не попадает)
 # =============================================================================
 
+# =============================================================================
+# Stage 1 — UI build
+# =============================================================================
+FROM node:24.14-slim AS ui-builder
+
+RUN npm install -g pnpm@9 --no-update-notifier --quiet
+
+WORKDIR /build
+
+# Слой с зависимостями отдельно — инвалидируется только при изменении lockfile
+COPY ui/package.json ui/pnpm-lock.yaml ui/pnpm-workspace.yaml ./
+RUN rm -f pnpm-workspace.yaml && pnpm install --frozen-lockfile
+
+COPY ui/ ./
+RUN rm -f pnpm-workspace.yaml && pnpm build
+# /build/dist — готовый React bundle
+
+
+# =============================================================================
+# Stage 2 — API build
+# =============================================================================
+FROM node:24.14-slim AS api-builder
+
+RUN npm install -g pnpm@9 --no-update-notifier --quiet
+
+WORKDIR /build
+
+COPY api/package.json api/pnpm-lock.yaml api/pnpm-workspace.yaml ./
+# Все зависимости нужны чтобы скомпилировать TypeScript
+RUN rm -f pnpm-workspace.yaml && pnpm install --frozen-lockfile
+
+COPY api/ ./
+
+# Компиляция TS → JS
+RUN rm -f pnpm-workspace.yaml && pnpm build
+
+# Удаляем devDependencies — в финальный образ идут только prod deps
+RUN pnpm prune --prod
+# /build/dist          — скомпилированный NestJS
+# /build/node_modules  — только production зависимости
+
+
+# =============================================================================
+# Stage 3 — Runtime (CUDA)
+# =============================================================================
 FROM runpod/pytorch:1.0.2-cu1281-torch280-ubuntu2404
 
-ENV DEBIAN_FRONTEND=noninteractive
-ENV PYTHONDONTWRITEBYTECODE=1
-ENV PYTHONUNBUFFERED=1
-ENV NODE_ENV=production
+# -----------------------------------------------------------------------------
+# Environment
+# -----------------------------------------------------------------------------
+ENV DEBIAN_FRONTEND=noninteractive \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    NODE_ENV=production
 
-# ---------------------------------------------------------------------------
-# Пути данных — монтируются как volumes при запуске
-# На RunPod: сетевой volume монтируется отдельными папками
-# Локально:  -v ./models:/app/models  и т.д.
-# ---------------------------------------------------------------------------
-ENV MODELS_PATH=/app/models
-ENV DATASETS_PATH=/app/datasets
-ENV OUTPUTS_PATH=/app/outputs
-ENV LOGS_PATH=/app/logs
-ENV TEMP_PATH=/app/temp
-ENV SETTINGS_PATH=/app/gendojo/settings.json
+ENV MODELS_PATH=/app/models \
+    DATASETS_PATH=/app/datasets \
+    OUTPUTS_PATH=/app/outputs \
+    LOGS_PATH=/app/logs \
+    TEMP_PATH=/app/temp \
+    SETTINGS_PATH=/app/gendojo/settings.json \
+    SD_SCRIPTS_PATH=/app/sd-scripts \
+    ACCELERATE_CONFIG_PATH=/app/configs/accelerate/default_config.yaml \
+    ACCELERATE_BIN=/usr/local/bin/accelerate
 
-# ---------------------------------------------------------------------------
-# sd-scripts и accelerate
-# ---------------------------------------------------------------------------
-ENV SD_SCRIPTS_PATH=/app/sd-scripts
-ENV ACCELERATE_CONFIG_PATH=/app/configs/accelerate/default_config.yaml
-ENV ACCELERATE_BIN=/usr/local/bin/accelerate
-
-# ---------------------------------------------------------------------------
-# System deps
-# ---------------------------------------------------------------------------
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl \
-    git \
-    wget \
-    ca-certificates \
-    libgl1 \
-    libglib2.0-0 \
-    libgomp1 \
+# -----------------------------------------------------------------------------
+# System deps + Node.js runtime
+# Один RUN — один слой, один apt clean
+# git нужен huggingface_hub при некоторых операциях с репозиториями
+# pnpm НЕ ставим — в финальном образе он не нужен
+# -----------------------------------------------------------------------------
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        curl \
+        git \
+        libgl1 \
+        libglib2.0-0 \
+        libgomp1 \
+    && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
+    && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# ---------------------------------------------------------------------------
-# Node.js 20 + pnpm
-# ---------------------------------------------------------------------------
-RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
-    && apt-get install -y --no-install-recommends nodejs \
-    && rm -rf /var/lib/apt/lists/* \
-    && npm install -g pnpm@9
-
-# ---------------------------------------------------------------------------
-# sd-scripts Python dependencies
-# Субмодуль должен быть инициализирован до билда:
-#   git clone --recurse-submodules ...
-# ---------------------------------------------------------------------------
 WORKDIR /app
 
-COPY sd-scripts/ ./sd-scripts/
+# -----------------------------------------------------------------------------
+# Python — sd-scripts deps
+#
+# --mount=type=cache: pip скачивает пакеты один раз и кеширует на build-хосте.
+# При следующем билде без изменений в requirements.txt — мгновенно.
+# В финальный образ кеш НЕ попадает.
+#
+# Порядок важен: сначала копируем только requirements.txt (дешёвый COPY),
+# чтобы при изменениях в sd-scripts коде слой с pip не инвалидировался.
+# -----------------------------------------------------------------------------
+COPY sd-scripts/requirements.txt ./sd-scripts/requirements.txt
 
-RUN pip install --no-cache-dir \
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install \
         accelerate \
         toml \
         tensorboard \
         safetensors \
         huggingface_hub \
-    && cd sd-scripts && pip install --no-cache-dir -r requirements.txt
+    && grep -v '^-e' ./sd-scripts/requirements.txt | pip install -r /dev/stdin
 
-# ---------------------------------------------------------------------------
+# sd-scripts source (после pip — чтобы изменения в .py не пересобирали pip слой)
+COPY sd-scripts/ ./sd-scripts/
+
+# -----------------------------------------------------------------------------
 # accelerate config
-# ---------------------------------------------------------------------------
-COPY configs/accelerate/runpod.yaml /app/configs/accelerate/runpod.yaml
-RUN cp /app/configs/accelerate/runpod.yaml /app/configs/accelerate/default_config.yaml \
+# -----------------------------------------------------------------------------
+COPY configs/accelerate/ ./configs/accelerate/
+
+RUN cp ./configs/accelerate/runpod.yaml ./configs/accelerate/default_config.yaml \
     && mkdir -p /root/.cache/huggingface/accelerate \
-    && cp /app/configs/accelerate/runpod.yaml \
+    && cp ./configs/accelerate/runpod.yaml \
           /root/.cache/huggingface/accelerate/default_config.yaml
 
-# ---------------------------------------------------------------------------
-# Frontend — build React app
-# pnpm-workspace.yaml удаляется — в образе каждый пакет собирается изолированно
-# NODE_ENV=development нужен чтобы pnpm поставил devDependencies (tsc, vite и т.д.)
-# ---------------------------------------------------------------------------
-COPY ui/package.json ui/pnpm-lock.yaml ui/pnpm-workspace.yaml ./ui/
-RUN cd ui && rm -f pnpm-workspace.yaml \
-    && NODE_ENV=development pnpm install --frozen-lockfile
+# -----------------------------------------------------------------------------
+# Node.js app — копируем только артефакты из build stages
+# pnpm-workspace.yaml и прочий build tooling сюда не попадает
+# -----------------------------------------------------------------------------
+COPY --from=ui-builder  /build/dist/        ./api/public/
+COPY --from=api-builder /build/dist/        ./api/dist/
+COPY --from=api-builder /build/node_modules/ ./api/node_modules/
+COPY --from=api-builder /build/package.json  ./api/package.json
 
-COPY ui/ ./ui/
-RUN cd ui && rm -f pnpm-workspace.yaml && pnpm build
-
-# ---------------------------------------------------------------------------
-# Backend — build NestJS
-# ---------------------------------------------------------------------------
-COPY api/package.json api/pnpm-lock.yaml api/pnpm-workspace.yaml ./api/
-RUN cd api && rm -f pnpm-workspace.yaml \
-    && NODE_ENV=development pnpm install --frozen-lockfile
-
-COPY api/ ./api/
-
-# Копируем собранный фронт в api/public — NestJS сервит его как статику
-RUN mkdir -p api/public && cp -r ui/dist/. api/public/
-
-RUN cd api && rm -f pnpm-workspace.yaml && pnpm build
-
-# ---------------------------------------------------------------------------
-# Data directories — перекрываются volume mount'ами при запуске
+# -----------------------------------------------------------------------------
+# Data directories — при запуске перекрываются volume mount'ами
 # Нужны чтобы контейнер стартовал без ошибок если volume не примонтирован
-# ---------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
 RUN mkdir -p \
     /app/models \
     /app/datasets \
@@ -114,12 +153,11 @@ RUN mkdir -p \
     /app/temp \
     /app/gendojo
 
-# ---------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
 # Entrypoint
-# ---------------------------------------------------------------------------
-COPY start.sh /app/start.sh
-RUN chmod +x /app/start.sh
+# -----------------------------------------------------------------------------
+COPY start.sh ./start.sh
+RUN chmod +x ./start.sh
 
 EXPOSE 3000
-
 CMD ["/app/start.sh"]

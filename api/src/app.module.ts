@@ -13,6 +13,8 @@ import { SettingsModule } from './system/settings/settings.module';
 import { join } from 'path';
 import { DownloaderModule } from './downloader/downloader.module';
 import { TokensModule } from './tokens/tokens.module';
+import { OutputsModule } from './jobs/outputs/outputs.module';
+import { PresetsModule } from './presets/presets.module';
 
 @Module({
   imports: [
@@ -21,6 +23,8 @@ import { TokensModule } from './tokens/tokens.module';
       exclude: ['/api/*path'],   // ← вместо '/api/(.*)'
     }),
     JobsModule,
+    OutputsModule,
+    PresetsModule,
     ModelsModule,
     SystemModule,
     SettingsModule,

@@ -19,10 +19,11 @@ import {
   IconEdit,
   IconPhoto,
 } from "@tabler/icons-react";
-import { useDataset } from "@services/datasets";
+import { useDataset, datasetsApi } from "@services/datasets";
 import { useNavigate, useParams } from "@tanstack/react-router";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { LightboxModal } from "@ui/LightboxModal";
+import { makeDatasetSidePanel } from "@blocks/DatasetSidepanel";
 import { DatasetImageGrid } from "@layouts/DatasetImageGrid";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -38,7 +39,7 @@ export default function ViewDatasetPage() {
 
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
 
-  // Keyboard: open lightbox with Enter on focused grid item, close with Escape
+  // Keyboard: close lightbox with Escape
   const handleKeyboard = useCallback(
     (e: KeyboardEvent) => {
       if (e.key === "Escape" && lightboxIndex !== null) setLightboxIndex(null);
@@ -50,6 +51,29 @@ export default function ViewDatasetPage() {
     window.addEventListener("keydown", handleKeyboard);
     return () => window.removeEventListener("keydown", handleKeyboard);
   }, [handleKeyboard]);
+
+  // Map DatasetImage[] → LightboxImage[] (stable, recalculated only when dataset changes)
+  const lightboxImages = useMemo(
+    () =>
+      dataset?.images.map((img) => ({
+        filename: img.filename,
+        url: datasetsApi.getImageUrl(datasetName, img.filename),
+      })) ?? [],
+    [dataset?.images, datasetName],
+  );
+
+  const handleEdit = useCallback(() => {
+    const filename =
+      lightboxIndex !== null
+        ? dataset?.images[lightboxIndex]?.filename
+        : undefined;
+    setLightboxIndex(null);
+    navigate({
+      to: "/datasets/edit/$datasetName",
+      params: { datasetName },
+      search: filename ? { filename } : { filename: undefined },
+    });
+  }, [lightboxIndex, dataset?.images, datasetName, navigate]);
 
   // ── Loading / error ────────────────────────────────────────────────────────
 
@@ -100,25 +124,18 @@ export default function ViewDatasetPage() {
   return (
     <>
       {/* Lightbox */}
-      {lightboxIndex !== null && dataset.images.length > 0 && (
+      {lightboxIndex !== null && lightboxImages.length > 0 && (
         <LightboxModal
-          images={dataset.images}
+          images={lightboxImages}
           index={lightboxIndex}
-          datasetName={datasetName}
           onClose={() => setLightboxIndex(null)}
           onNavigate={setLightboxIndex}
-          onEdit={() => {
-            const filename =
-              lightboxIndex !== null
-                ? dataset.images[lightboxIndex]?.filename
-                : undefined;
-            setLightboxIndex(null);
-            navigate({
-              to: "/datasets/edit/$datasetName",
-              params: { datasetName },
-              search: filename ? { filename } : { filename: undefined },
-            });
-          }}
+          renderSidePanel={makeDatasetSidePanel({
+            datasetImages: dataset.images,
+            datasetName,
+            onClose: () => setLightboxIndex(null),
+            onEdit: handleEdit,
+          })}
         />
       )}
 

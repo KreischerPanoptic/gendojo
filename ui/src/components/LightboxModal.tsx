@@ -2,37 +2,42 @@ import {
   ActionIcon,
   Badge,
   Box,
-  Button,
-  Divider,
   Group,
-  Kbd,
   Modal,
-  ScrollArea,
-  Skeleton,
   Stack,
   Text,
 } from '@mantine/core'
-import { datasetsApi, useCaption, type DatasetImage } from '@services/datasets'
 import {
   IconChevronLeft,
   IconChevronRight,
-  IconEdit,
   IconPhotoOff,
-  IconTag,
-  IconTagOff,
-  IconX,
 } from '@tabler/icons-react'
 import { useEffect, useState } from 'react'
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Helpers
+// Generic image type — used by all LightboxModal consumers.
+//
+// Dataset mode:  map DatasetImage → LightboxImage via datasetsApi.getImageUrl()
+// Preview mode:  url comes from /jobs/:id/outputs/previews/:filename
 // ─────────────────────────────────────────────────────────────────────────────
 
-function aspectRatio(w: number, h: number): string {
-  if (w === 0 || h === 0) return '—'
-  const gcd = (a: number, b: number): number => (b === 0 ? a : gcd(b, a % b))
-  const d = gcd(w, h)
-  return `${w / d}:${h / d}`
+export interface LightboxImage {
+  /** Stable key — filename or any unique id */
+  filename: string
+  /** Fully-resolved URL ready to put in <img src> */
+  url: string
+  /** Optional label shown in the counter badge (e.g. "epoch 4 · prompt 2") */
+  label?: string
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Dimensions — passed to renderSidePanel so panels can show w×h / aspect ratio
+// without duplicating the onLoad logic.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface ImageDimensions {
+  w: number
+  h: number
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -40,24 +45,40 @@ function aspectRatio(w: number, h: number): string {
 // ─────────────────────────────────────────────────────────────────────────────
 
 export interface LightboxModalProps {
-  images: DatasetImage[]
+  images: LightboxImage[]
   index: number
-  datasetName: string
   onClose: () => void
   onNavigate: (index: number) => void
-  onEdit: () => void
+  /**
+   * Renders the full right panel for the current image.
+   * Receives the current image, its index, and resolved dimensions (null until loaded).
+   *
+   * Use <LightboxSidePanel> for consistent chrome (header with filename + X,
+   * scrollable content, optional footer).
+   */
+  renderSidePanel: (
+    image: LightboxImage,
+    index: number,
+    dimensions: ImageDimensions | null,
+  ) => React.ReactNode
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Component
+// LightboxModal
 // ─────────────────────────────────────────────────────────────────────────────
 
-export function LightboxModal({ images, index, datasetName, onClose, onNavigate, onEdit }: LightboxModalProps) {
+export function LightboxModal({
+  images,
+  index,
+  onClose,
+  onNavigate,
+  renderSidePanel,
+}: LightboxModalProps) {
   const image = images[index]
   const [imgError, setImgError] = useState(false)
-  const [dimensions, setDimensions] = useState<{ w: number; h: number } | null>(null)
+  const [dimensions, setDimensions] = useState<ImageDimensions | null>(null)
 
-  // ── Reset per-image UI state (adjust-state-during-render) ─────────────────
+  // Reset per-image state when image changes (adjust-state-during-render pattern)
   const [prevFilename, setPrevFilename] = useState(image.filename)
   if (prevFilename !== image.filename) {
     setPrevFilename(image.filename)
@@ -65,10 +86,7 @@ export function LightboxModal({ images, index, datasetName, onClose, onNavigate,
     setDimensions(null)
   }
 
-  const src = datasetsApi.getImageUrl(datasetName, image.filename)
-  const { data: captionData, isLoading: captionLoading } = useCaption(datasetName, image.filename)
-
-  // Keyboard nav — this is a genuine external subscription, useEffect is correct here
+  // Keyboard navigation
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (e.key === 'ArrowRight') onNavigate(Math.min(index + 1, images.length - 1))
@@ -92,7 +110,7 @@ export function LightboxModal({ images, index, datasetName, onClose, onNavigate,
     >
       <Group gap={0} align="stretch" style={{ minHeight: 500, maxHeight: '80vh' }}>
 
-        {/* ── Image side ─────────────────────────────────────────────────── */}
+        {/* ── Image pane ───────────────────────────────────────────────────── */}
         <Box
           style={{
             flex: 1,
@@ -113,14 +131,19 @@ export function LightboxModal({ images, index, datasetName, onClose, onNavigate,
             </Stack>
           ) : (
             <img
-              src={src}
+              src={image.url}
               alt={image.filename}
               onError={() => setImgError(true)}
               onLoad={(e) => {
                 const el = e.currentTarget
                 setDimensions({ w: el.naturalWidth, h: el.naturalHeight })
               }}
-              style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain', display: 'block' }}
+              style={{
+                maxWidth: '100%',
+                maxHeight: '100%',
+                objectFit: 'contain',
+                display: 'block',
+              }}
             />
           )}
 
@@ -128,29 +151,37 @@ export function LightboxModal({ images, index, datasetName, onClose, onNavigate,
             <ActionIcon
               variant="filled" color="dark" size="lg" radius="xl"
               onClick={() => onNavigate(index - 1)}
-              style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', opacity: 0.8 }}
+              style={{
+                position: 'absolute', left: 12,
+                top: '50%', transform: 'translateY(-50%)', opacity: 0.8,
+              }}
             >
               <IconChevronLeft size={18} />
             </ActionIcon>
           )}
+
           {index < images.length - 1 && (
             <ActionIcon
               variant="filled" color="dark" size="lg" radius="xl"
               onClick={() => onNavigate(index + 1)}
-              style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)', opacity: 0.8 }}
+              style={{
+                position: 'absolute', right: 12,
+                top: '50%', transform: 'translateY(-50%)', opacity: 0.8,
+              }}
             >
               <IconChevronRight size={18} />
             </ActionIcon>
           )}
 
+          {/* Counter badge — shows label if provided, otherwise "N / total" */}
           <Box style={{ position: 'absolute', bottom: 12, left: '50%', transform: 'translateX(-50%)' }}>
             <Badge variant="filled" color="dark" size="sm" style={{ opacity: 0.75 }}>
-              {index + 1} / {images.length}
+              {image.label ?? `${index + 1} / ${images.length}`}
             </Badge>
           </Box>
         </Box>
 
-        {/* ── Info side ──────────────────────────────────────────────────── */}
+        {/* ── Side panel — fully owned by the render prop ──────────────────── */}
         <Box
           w={280}
           style={{
@@ -158,97 +189,90 @@ export function LightboxModal({ images, index, datasetName, onClose, onNavigate,
             display: 'flex',
             flexDirection: 'column',
             borderLeft: '1px solid var(--mantine-color-default-border)',
+            overflow: 'hidden',
           }}
         >
-          <Group
-            justify="space-between" p="md" pb="xs"
-            style={{ borderBottom: '1px solid var(--mantine-color-default-border)' }}
-          >
-            <Text
-              size="sm" fw={600}
-              style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}
-            >
-              {image.filename}
-            </Text>
-            <ActionIcon variant="subtle" color="gray" size="sm" onClick={onClose}>
-              <IconX size={14} />
-            </ActionIcon>
-          </Group>
-
-          <ScrollArea style={{ flex: 1 }} p="md">
-            <Stack gap="md">
-              <Group gap="xs">
-                <Badge
-                  size="xs" variant="light"
-                  color={image.hasCaption ? 'teal' : 'gray'}
-                  leftSection={image.hasCaption ? <IconTag size={10} /> : <IconTagOff size={10} />}
-                >
-                  {image.hasCaption ? 'captioned' : 'no caption'}
-                </Badge>
-                <Badge size="xs" color="gray" variant="outline">
-                  {(image.sizeBytes / 1024).toFixed(0)} KB
-                </Badge>
-                {dimensions && (
-                  <>
-                    <Badge size="xs" color="gray" variant="outline">
-                      {dimensions.w}×{dimensions.h}
-                    </Badge>
-                    <Badge size="xs" color="gray" variant="outline">
-                      {aspectRatio(dimensions.w, dimensions.h)}
-                    </Badge>
-                  </>
-                )}
-              </Group>
-
-              <Divider />
-
-              <Stack gap={6}>
-                <Text size="xs" fw={600} c="dimmed" tt="uppercase" style={{ letterSpacing: '0.06em' }}>
-                  Caption
-                </Text>
-                {captionLoading ? (
-                  <Stack gap={4}>
-                    <Skeleton height={10} radius="sm" />
-                    <Skeleton height={10} width="80%" radius="sm" />
-                    <Skeleton height={10} width="60%" radius="sm" />
-                  </Stack>
-                ) : captionData?.caption ? (
-                  <Text
-                    size="sm"
-                    style={{
-                      fontFamily: 'var(--mantine-font-family-monospace)',
-                      fontSize: '0.78rem',
-                      lineHeight: 1.6,
-                      wordBreak: 'break-word',
-                    }}
-                  >
-                    {captionData.caption}
-                  </Text>
-                ) : (
-                  <Text size="xs" c="dimmed" fs="italic">No caption yet</Text>
-                )}
-              </Stack>
-            </Stack>
-          </ScrollArea>
-
-          <Box p="md" pt="xs" style={{ borderTop: '1px solid var(--mantine-color-default-border)' }}>
-            <Stack gap="xs">
-              <Button fullWidth variant="light" leftSection={<IconEdit size={14} />} size="sm" onClick={onEdit}>
-                Edit captions
-              </Button>
-              <Group gap={4} justify="center">
-                <Kbd size="xs">←</Kbd>
-                <Kbd size="xs">→</Kbd>
-                <Text size="xs" c="dimmed">navigate</Text>
-                <Text size="xs" c="dimmed" mx={4}>·</Text>
-                <Kbd size="xs">Esc</Kbd>
-                <Text size="xs" c="dimmed">close</Text>
-              </Group>
-            </Stack>
-          </Box>
+          {renderSidePanel(image, index, dimensions)}
         </Box>
 
       </Group>
     </Modal>
+  )
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// LightboxSidePanel — layout helper for renderSidePanel implementations.
+//
+// Provides consistent chrome:
+//   • Header  — filename (truncated) + X close button
+//   • Content — flex-1 scrollable area (pass as children)
+//   • Footer  — optional, e.g. action buttons + keyboard hints
+//
+// Usage:
+//   renderSidePanel={(image, _i, dims) => (
+//     <LightboxSidePanel image={image} onClose={onClose} footer={<MyFooter />}>
+//       <MyPanelContent dims={dims} />
+//     </LightboxSidePanel>
+//   )}
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface LightboxSidePanelProps {
+  image: LightboxImage
+  onClose: () => void
+  children: React.ReactNode
+  footer?: React.ReactNode
+}
+
+export function LightboxSidePanel({
+  image,
+  onClose,
+  children,
+  footer,
+}: LightboxSidePanelProps) {
+  return (
+    <>
+      {/* Header */}
+      <Group
+        justify="space-between"
+        p="md"
+        pb="xs"
+        style={{ borderBottom: '1px solid var(--mantine-color-default-border)', flexShrink: 0 }}
+      >
+        <Text
+          size="sm" fw={600}
+          style={{
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+            flex: 1,
+          }}
+        >
+          {image.filename}
+        </Text>
+        <ActionIcon variant="subtle" color="gray" size="sm" onClick={onClose}>
+          {/* inline SVG to avoid extra import in this helper */}
+          <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </ActionIcon>
+      </Group>
+
+      {/* Scrollable content */}
+      <Box style={{ flex: 1, overflowY: 'auto', padding: 'var(--mantine-spacing-md)' }}>
+        {children}
+      </Box>
+
+      {/* Optional footer */}
+      {footer && (
+        <Box
+          p="md"
+          pt="xs"
+          style={{ borderTop: '1px solid var(--mantine-color-default-border)', flexShrink: 0 }}
+        >
+          {footer}
+        </Box>
+      )}
+    </>
   )
 }

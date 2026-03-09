@@ -12,6 +12,9 @@ export default function JobsPage() {
   const handleView = (job: JobSummary) =>
     navigate({ to: '/jobs/' + job.id })
 
+  const handleViewOutputs = (job: JobSummary) =>
+    navigate({ to: '/jobs/' + job.id + '/outputs' })
+
   return (
     <Stack gap="lg" p="lg" className="w-full">
       <Group justify="space-between" align="center">
@@ -25,7 +28,7 @@ export default function JobsPage() {
         </Button>
       </Group>
 
-      <JobsTable onView={handleView} />
+      <JobsTable onView={handleView} onViewOutputs={handleViewOutputs} />
     </Stack>
   )
 }

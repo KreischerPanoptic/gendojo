@@ -15,6 +15,7 @@ import {
   Switch,
   Tabs,
   Text,
+  Textarea,
   TextInput,
   Title,
   Tooltip,
@@ -23,26 +24,28 @@ import {
   IconArrowLeft,
   IconBolt,
   IconChevronRight,
+  IconPhoto,
   IconPlayerPlay,
+  IconPlus,
   IconRefresh,
+  IconTrash,
 } from '@tabler/icons-react'
 import axios from 'axios'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate } from '@tanstack/react-router'
 
-import type { TrainConfig } from '@services/jobs'
+import type { TrainConfig, SampleImagesConfig, SamplePromptInput } from '@services/jobs'
 import { useCreateJob } from '@services/jobs'
 import { useDatasetTomlPreview, useTrainTomlPreview } from '@services/toml'
 import { useDatasets } from '@services/datasets'
 import { useModels, type ModelFile, type ModelRole, type ModelArchitecture, formatSize } from '@services/models'
 import { usePaths } from '@services/settings'
+import { usePresets, type TrainingPreset, PRESET_TIER_COLOR } from '@services/presets'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
 // ─────────────────────────────────────────────────────────────────────────────
 
-// We alias ModelArchitecture minus 'unknown' for the trainable archs.
-// The Select only exposes 9 valid options; 'unknown' is never submitted.
 type Arch = Exclude<ModelArchitecture, 'unknown'>
 
 interface NewJobForm {
@@ -58,7 +61,7 @@ interface NewJobForm {
   num_repeats: number
   class_tokens: string
 
-  // Model paths — all stored as absolute paths
+  // Model paths — absolute paths passed directly to sd-scripts
   pretrained_model_name_or_path: string
   clip_l: string
   clip_g: string
@@ -137,9 +140,6 @@ const ARCH_BADGE_COLOR: Record<Arch, string> = {
   sd1: 'gray', sd2: 'gray', sdxl: 'violet', flux: 'blue',
   chroma: 'cyan', sd3: 'teal', anima: 'orange', lumina: 'yellow', hunyuan: 'red',
 }
-
-// Safe lookup — form.arch is always one of the 9 valid values via ARCH_OPTIONS,
-// but guard against stale state or future additions returning undefined.
 const archBadgeColor = (arch: Arch) => ARCH_BADGE_COLOR[arch] ?? 'gray'
 
 const LR_SCHEDULERS = [
@@ -152,8 +152,6 @@ const OPTIMIZERS = [
   'Prodigy', 'DAdaptation', 'SGDNesterov', 'SGDNesterov8bit',
 ].map(v => ({ value: v, label: v }))
 
-// Roles that represent a "main" model (DiT, U-Net, or classic checkpoint).
-// Used in mainModels filter as a fallback when type='unknown' but role is known.
 const MAIN_ROLES: ModelRole[] = ['checkpoint', 'dit', 'unet']
 
 const TIMESTEP_SAMPLING_OPTIONS = [
@@ -163,6 +161,23 @@ const TIMESTEP_SAMPLING_OPTIONS = [
   { value: 'uniform',       label: 'uniform' },
   { value: 'shift',         label: 'shift' },
   { value: 'nextdit_shift', label: 'nextdit_shift (Lumina)' },
+]
+
+// Samplers supported by sd-scripts gen_img.py / sdxl_gen_img.py
+const SAMPLE_SAMPLERS = [
+  'euler_a', 'euler', 'ddim', 'ddpm',
+  'dpm2', 'dpm2_a', 'dpmsolver', 'dpmsolver++', 'heun', 'lms',
+].map(v => ({ value: v, label: v }))
+
+// Common portrait / landscape / square sizes from gen_img examples
+const COMMON_SIZES = [
+  { label: '1024×1024',           w: 1024, h: 1024 },
+  { label: '1216×832  landscape', w: 1216, h: 832  },
+  { label: '832×1216  portrait',  w: 832,  h: 1216 },
+  { label: '1152×896  landscape', w: 1152, h: 896  },
+  { label: '896×1152  portrait',  w: 896,  h: 1152 },
+  { label: '512×512',             w: 512,  h: 512  },
+  { label: '768×768',             w: 768,  h: 768  },
 ]
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -228,7 +243,30 @@ const DEFAULT_FORM: NewJobForm = {
 Object.assign(DEFAULT_FORM, ARCH_DEFAULTS['flux'])
 
 // ─────────────────────────────────────────────────────────────────────────────
-// buildTrainConfig — for actual job creation (no placeholders)
+// Default sample state
+// ─────────────────────────────────────────────────────────────────────────────
+
+const BLANK_PROMPT: SamplePromptInput = {
+  prompt: '',
+  negativePrompt: '',
+  seed: 42,
+  width: 1024,
+  height: 1024,
+  steps: 28,
+  cfg: 7.0,
+  withoutToken: false,
+}
+
+const DEFAULT_SAMPLE: SampleImagesConfig = {
+  prompts: [],
+  activationToken: '',
+  captionStyle: 'natural',
+  every_n_epochs: 1,
+  sampler: 'euler_a',
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// buildTrainConfig
 // ─────────────────────────────────────────────────────────────────────────────
 
 function buildTrainConfig(form: NewJobForm): TrainConfig {
@@ -236,9 +274,6 @@ function buildTrainConfig(form: NewJobForm): TrainConfig {
     arch:         form.arch,
     output_name:  form.output_name || 'untitled',
     pretrained_model_name_or_path: form.pretrained_model_name_or_path || '',
-    // output_dir: only send when user explicitly filled the override field.
-    // If omitted, JobsService constructs: path.join(settings.outputs, output_name)
-    // which is OS-correct (backslashes on Windows, forward slashes on Linux).
     ...(form.output_dir.trim() && { output_dir: form.output_dir.trim() }),
 
     network_dim:    form.network_dim,
@@ -322,27 +357,12 @@ function buildTrainConfig(form: NewJobForm): TrainConfig {
   return base
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// buildTrainPreviewConfig
-// POST /toml/preview/train validates output_dir and dataset_config as required
-// fields, but JobsService injects them at job-creation time.
-// For preview we inject harmless placeholders.
-// ─────────────────────────────────────────────────────────────────────────────
-
 function buildTrainPreviewConfig(form: NewJobForm, outputsBase = '/workspace/outputs'): TrainConfig {
   const cfg = buildTrainConfig(form)
-  // Inject preview-only placeholders — real values injected by JobsService at submission
   if (!cfg.output_dir) cfg.output_dir = `${outputsBase}/${form.output_name || 'untitled'}`
-  // dataset_config is injected by JobsService on actual submission.
-  // For preview we use a descriptive placeholder so the validator accepts the request.
-  // The real path will be: <logs>/jobs/<jobId>/dataset.toml
   cfg.dataset_config = '<job-dir>/dataset.toml'
   return cfg
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// buildDatasetPreviewDto
-// ─────────────────────────────────────────────────────────────────────────────
 
 function buildDatasetPreviewDto(form: NewJobForm) {
   if (!form.datasetRef) return null
@@ -363,8 +383,52 @@ function buildDatasetPreviewDto(form: NewJobForm) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// ModelSelect — dropdown populated from scanned models API
-// value = absolute path on disk (what sd-scripts receives)
+// formatPromptsPreview
+//
+// Mirrors the backend's prompts-file formatter so the user sees the exact
+// lines that will be written to prompts.txt.
+//
+// sd-scripts gen_img inline options:
+//   --d <seed>   --w <width>   --h <height>   --s <steps>   --c <cfg>   --n <negative>
+//
+// Token join styles:
+//   natural:  "@token. Prompt text…"
+//   tags:     "@token, prompt text…"
+// ─────────────────────────────────────────────────────────────────────────────
+
+function formatPromptsPreview(config: SampleImagesConfig): string {
+  const { activationToken, captionStyle = 'natural', prompts } = config
+  const token = activationToken?.trim() ?? ''
+  const sep = captionStyle === 'natural' ? '. ' : ', '
+
+  const lines = prompts
+    .filter(p => p.prompt.trim())
+    .map(p => {
+      const parts: string[] = []
+
+      if (token && !p.withoutToken) {
+        parts.push(`${token}${sep}${p.prompt.trim()}`)
+      } else {
+        parts.push(p.prompt.trim())
+      }
+
+      // Inline parameters — same order as the example prompts in the docs
+      if (p.seed   !== undefined) parts.push(`--d ${p.seed}`)
+      if (p.width  !== undefined) parts.push(`--w ${p.width}`)
+      if (p.height !== undefined) parts.push(`--h ${p.height}`)
+      if (p.steps  !== undefined) parts.push(`--s ${p.steps}`)
+      if (p.cfg    !== undefined) parts.push(`--c ${p.cfg}`)
+      if (p.negativePrompt?.trim()) parts.push(`--n ${p.negativePrompt.trim()}`)
+
+      return parts.join(' ')
+    })
+
+  if (lines.length === 0) return '# No valid prompts yet'
+  return lines.join('\n')
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ModelSelect
 // ─────────────────────────────────────────────────────────────────────────────
 
 interface ModelSelectProps {
@@ -377,9 +441,6 @@ interface ModelSelectProps {
 }
 
 function ModelSelect({ label, description, required, value, onChange, models }: ModelSelectProps) {
-  // absolutePath is what sd-scripts receives and what we store in form state.
-  // Guard: Mantine throws "Each option must have value property" if any item
-  // has value === undefined or value === null. Filter defensively.
   const data = models
     .filter(m => m.absolutePath != null && m.absolutePath !== '')
     .map(m => ({
@@ -387,8 +448,6 @@ function ModelSelect({ label, description, required, value, onChange, models }: 
       label: `${m.name}  ·  ${formatSize(m.sizeBytes)}`,
     }))
 
-  // If the stored path isn't in the list (e.g. arch changed and old value
-  // persisted briefly), keep it as an option so Select doesn't go blank.
   if (value && !data.some(d => d.value === value)) {
     data.unshift({ value, label: value })
   }
@@ -432,15 +491,118 @@ function SectionCard({ title, children }: { title: string; children: React.React
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// PromptRow — single editable entry in the preview-images list
+// ─────────────────────────────────────────────────────────────────────────────
+
+interface PromptRowProps {
+  index: number
+  prompt: SamplePromptInput
+  onChange: (index: number, updated: SamplePromptInput) => void
+  onRemove: (index: number) => void
+}
+
+function PromptRow({ index, prompt, onChange, onRemove }: PromptRowProps) {
+  const set = <K extends keyof SamplePromptInput>(key: K, value: SamplePromptInput[K]) =>
+    onChange(index, { ...prompt, [key]: value })
+
+  const sizeValue = `${prompt.width ?? 1024}x${prompt.height ?? 1024}`
+  const sizeData  = COMMON_SIZES.map(s => ({ value: `${s.w}x${s.h}`, label: s.label }))
+  // If the current size isn't in the list, add it so Select doesn't go blank
+  if (!sizeData.some(d => d.value === sizeValue)) {
+    sizeData.unshift({ value: sizeValue, label: sizeValue })
+  }
+
+  return (
+    <Paper withBorder p="sm" radius="sm">
+      <Stack gap="xs">
+        <Group justify="space-between" wrap="nowrap">
+          <Text size="xs" c="dimmed" fw={500}>Prompt {index + 1}</Text>
+          <Group gap="sm">
+            <Switch
+              size="xs"
+              label={<Text size="xs" c="dimmed">Without token</Text>}
+              checked={prompt.withoutToken ?? false}
+              onChange={e => set('withoutToken', e.currentTarget.checked)}
+            />
+            <ActionIcon variant="subtle" color="red" size="sm" onClick={() => onRemove(index)}>
+              <IconTrash size={13} />
+            </ActionIcon>
+          </Group>
+        </Group>
+
+        <Textarea
+          placeholder="A cinematic portrait of the character in dramatic lighting…"
+          value={prompt.prompt}
+          onChange={e => set('prompt', e.currentTarget.value)}
+          minRows={2} autosize size="sm"
+          styles={{ input: { fontFamily: 'monospace', fontSize: 12 } }}
+        />
+
+        <TextInput
+          label="Negative  --n"
+          placeholder="worst quality, blurry…"
+          value={prompt.negativePrompt ?? ''}
+          onChange={e => set('negativePrompt', e.currentTarget.value)}
+          size="xs"
+          styles={{ input: { fontFamily: 'monospace', fontSize: 11 } }}
+        />
+
+        <Group gap="xs" wrap="wrap">
+          <Select
+            label="Size  --w / --h"
+            size="xs"
+            style={{ flex: '1 1 180px' }}
+            data={sizeData}
+            value={sizeValue}
+            onChange={v => {
+              if (!v) return
+              const [w, h] = v.split('x').map(Number)
+              onChange(index, { ...prompt, width: w, height: h })
+            }}
+            allowDeselect={false}
+          />
+          <NumberInput
+            label="Steps  --s"
+            size="xs"
+            style={{ flex: '0 0 80px' }}
+            value={prompt.steps ?? 28}
+            onChange={v => set('steps', Number(v) || 28)}
+            min={1} max={150}
+          />
+          <NumberInput
+            label="CFG  --c"
+            size="xs"
+            style={{ flex: '0 0 80px' }}
+            value={prompt.cfg ?? 7.0}
+            onChange={v => set('cfg', Number(v))}
+            min={0} max={30} step={0.5} decimalScale={1}
+          />
+          <NumberInput
+            label="Seed  --d"
+            size="xs"
+            style={{ flex: '0 0 90px' }}
+            value={prompt.seed ?? 42}
+            onChange={v => set('seed', Number(v))}
+            min={0}
+          />
+        </Group>
+      </Stack>
+    </Paper>
+  )
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // NewJobPage
 // ─────────────────────────────────────────────────────────────────────────────
 
 export default function NewJobPage() {
   const navigate = useNavigate()
-  const [form, setForm] = useState<NewJobForm>(DEFAULT_FORM)
+  const [form, setForm]           = useState<NewJobForm>(DEFAULT_FORM)
   const [debouncedForm, setDebouncedForm] = useState<NewJobForm>(DEFAULT_FORM)
+  const [sample, setSample]       = useState<SampleImagesConfig>(DEFAULT_SAMPLE)
+  const [sampleBySteps, setSampleBySteps] = useState(false)
 
-  // Debounce 400 ms → TOML preview
+  // Debounce TOML preview
   useEffect(() => {
     const t = setTimeout(() => setDebouncedForm(form), 400)
     return () => clearTimeout(t)
@@ -459,114 +621,135 @@ export default function NewJobPage() {
       ...prev,
       arch: arch as Arch,
       ...defaults,
-      // Clear model paths so wrong-arch paths don't persist
       pretrained_model_name_or_path: '',
       clip_l: '', clip_g: '', t5xxl: '', ae: '',
       vae: '', qwen3: '', gemma2: '', text_encoder: '', byt5: '',
     }))
   }, [])
 
-  // ── Queries ──────────────────────────────────────────────────────────────────
+  // ── Preset application ─────────────────────────────────────────────────────
 
-  const { data: datasets = [] } = useDatasets()
+  const applyPreset = useCallback((preset: TrainingPreset) => {
+    const c = preset.config
+    setForm(prev => ({
+      ...prev,
+      ...(c.network_dim         !== undefined && { network_dim:         Number(c.network_dim) }),
+      ...(c.network_alpha       !== undefined && { network_alpha:       Number(c.network_alpha) }),
+      ...(c.learning_rate       !== undefined && { learning_rate:       Number(c.learning_rate) }),
+      ...(c.optimizer_type      !== undefined && { optimizer_type:      String(c.optimizer_type) }),
+      ...(c.lr_scheduler        !== undefined && { lr_scheduler:        String(c.lr_scheduler) }),
+      ...(c.max_train_epochs    !== undefined && { max_train_epochs:    Number(c.max_train_epochs), use_steps: false }),
+      ...(c.max_train_steps     !== undefined && { max_train_steps:     Number(c.max_train_steps),  use_steps: true  }),
+      ...(c.save_every_n_epochs !== undefined && { save_every_n_epochs: Number(c.save_every_n_epochs) }),
+      ...(c.mixed_precision     !== undefined && { mixed_precision:     c.mixed_precision as NewJobForm['mixed_precision'] }),
+      ...(c.save_precision      !== undefined && { save_precision:      c.save_precision as NewJobForm['save_precision'] }),
+      ...(c.gradient_checkpointing  !== undefined && { gradient_checkpointing:     Boolean(c.gradient_checkpointing) }),
+      ...(c.cache_latents           !== undefined && { cache_latents:              Boolean(c.cache_latents) }),
+      ...(c.cache_text_encoder_outputs !== undefined && { cache_text_encoder_outputs: Boolean(c.cache_text_encoder_outputs) }),
+      ...(c.network_train_unet_only !== undefined && { network_train_unet_only:    Boolean(c.network_train_unet_only) }),
+      ...(c.timestep_sampling   !== undefined && { timestep_sampling:   String(c.timestep_sampling) }),
+      ...(c.guidance_scale      !== undefined && { guidance_scale:      Number(c.guidance_scale) }),
+    }))
+  }, [])
+
+  // ── Queries ───────────────────────────────────────────────────────────────
+
+  const { data: datasets = [] }  = useDatasets()
   const { data: allModels = [] } = useModels()
-  const { data: paths } = usePaths()
+  const { data: paths }          = usePaths()
+  const { data: archPresets = [] } = usePresets({ arch: form.arch })
 
-  // ── Arch flags ───────────────────────────────────────────────────────────────
+  // ── Arch flags ────────────────────────────────────────────────────────────
 
-  const arch       = form.arch
-  const isFlux     = arch === 'flux'
-  const isChroma   = arch === 'chroma'
-  const isFluxLike = isFlux || isChroma
-  const isSd3      = arch === 'sd3'
-  const isAnima    = arch === 'anima'
-  const isLumina   = arch === 'lumina'
-  const isHunyuan  = arch === 'hunyuan'
-  const isSd2      = arch === 'sd2'
-  const isSdxl     = arch === 'sdxl'
-  const isClassic  = arch === 'sd1' || isSd2 || isSdxl
+  const arch        = form.arch
+  const isFlux      = arch === 'flux'
+  const isChroma    = arch === 'chroma'
+  const isFluxLike  = isFlux || isChroma
+  const isSd3       = arch === 'sd3'
+  const isAnima     = arch === 'anima'
+  const isLumina    = arch === 'lumina'
+  const isHunyuan   = arch === 'hunyuan'
+  const isSd2       = arch === 'sd2'
+  const isSdxl      = arch === 'sdxl'
+  const isClassic   = arch === 'sd1' || isSd2 || isSdxl
   const hasFlowArgs = isFluxLike || isSd3 || isAnima || isLumina || isHunyuan
 
-  // ── Model lists filtered by role (client-side) ───────────────────────────────
+  // ── Model lists ───────────────────────────────────────────────────────────
 
   const byRole = useCallback(
     (...roles: ModelRole[]) => allModels.filter(m => roles.includes(m.role)),
     [allModels],
   )
 
-  /**
-   * Like byRole but narrows to (targetArch | 'unknown').
-   * Falls back to all-arch results if the arch-filtered list is empty —
-   * handles the case where the user hasn't organised files into arch subdirs yet.
-   */
   const byRoleForArch = useCallback(
     (targetArch: Arch, ...roles: ModelRole[]) => {
-      const all = allModels.filter(m => roles.includes(m.role))
+      const all      = allModels.filter(m => roles.includes(m.role))
       const narrowed = all.filter(m => m.arch === targetArch || m.arch === 'unknown')
       return narrowed.length > 0 ? narrowed : all
     },
     [allModels],
   )
 
-  // Main DiT / checkpoint.
-  // We match by BOTH type and role so DiT models with type='unknown' (backend
-  // classification gap) still surface.  Classic archs also accept arch='unknown'
-  // since checkpoint scanners often can't distinguish SD1 from SD2 by filename alone.
   const mainModels = useMemo(() => {
     const isMain = (m: ModelFile) =>
       m.type === 'checkpoint' || MAIN_ROLES.includes(m.role)
-    if (isClassic) {
-      return allModels.filter(m => isMain(m) && (m.arch === arch || m.arch === 'unknown'))
-    }
+    if (isClassic) return allModels.filter(m => isMain(m) && (m.arch === arch || m.arch === 'unknown'))
     return allModels.filter(m => m.arch === arch && isMain(m))
   }, [allModels, arch, isClassic])
 
-  // ── Shared text-encoder / VAE models (same physical file reused across archs) ──
-  // clip_l, clip_g, t5xxl, ae — intentionally NOT arch-filtered:
-  // e.g. the same ae.safetensors ships with FLUX and is also used by Lumina.
-  const clipLModels = useMemo(() => byRole('clip_l'), [byRole])
-  const clipGModels = useMemo(() => byRole('clip_g'), [byRole])
-  const t5xxlModels = useMemo(() => byRole('t5xxl'),  [byRole])
-  const aeModels    = useMemo(() => byRole('ae'),      [byRole])
+  const clipLModels    = useMemo(() => byRole('clip_l'), [byRole])
+  const clipGModels    = useMemo(() => byRole('clip_g'), [byRole])
+  const t5xxlModels    = useMemo(() => byRole('t5xxl'),  [byRole])
+  const aeModels       = useMemo(() => byRole('ae'),     [byRole])
+  const vaeModels      = useMemo(() => byRoleForArch(arch, 'vae'), [byRoleForArch, arch])
+  const qwen3Models    = useMemo(() => byRoleForArch('anima',   'qwen3'),                   [byRoleForArch])
+  const gemma2Models   = useMemo(() => byRoleForArch('lumina',  'gemma2'),                  [byRoleForArch])
+  const qwen25VLModels = useMemo(() => byRoleForArch('hunyuan', 'qwen2_5_vl', 'text_encoder'), [byRoleForArch])
+  const byt5Models     = useMemo(() => byRoleForArch('hunyuan', 'byt5'),                    [byRoleForArch])
 
-  // ── Arch-specific accessory models — filter by arch, fallback to all ──────────
-  // VAE files differ between SD3, SDXL, Anima, HunyuanImage — filter by current arch.
-  const vaeModels = useMemo(
-    () => byRoleForArch(arch, 'vae'),
-    [byRoleForArch, arch],
-  )
-  // Qwen3-0.6B — Anima only
-  const qwen3Models = useMemo(
-    () => byRoleForArch('anima', 'qwen3'),
-    [byRoleForArch],
-  )
-  // Gemma2 — Lumina only
-  const gemma2Models = useMemo(
-    () => byRoleForArch('lumina', 'gemma2'),
-    [byRoleForArch],
-  )
-  // Qwen2.5-VL — HunyuanImage only
-  const qwen25VLModels = useMemo(
-    () => byRoleForArch('hunyuan', 'qwen2_5_vl', 'text_encoder'),
-    [byRoleForArch],
-  )
-  // byT5 — HunyuanImage only
-  const byt5Models = useMemo(
-    () => byRoleForArch('hunyuan', 'byt5'),
-    [byRoleForArch],
-  )
+  // ── TOML preview ──────────────────────────────────────────────────────────
 
-  // ── TOML preview ─────────────────────────────────────────────────────────────
-
-  const trainPreviewDto = useMemo(() => buildTrainPreviewConfig(debouncedForm, paths?.outputs), [debouncedForm, paths?.outputs])
-  const datasetDto      = useMemo(() => buildDatasetPreviewDto(debouncedForm),  [debouncedForm])
+  const trainPreviewDto = useMemo(
+    () => buildTrainPreviewConfig(debouncedForm, paths?.outputs),
+    [debouncedForm, paths?.outputs],
+  )
+  const datasetDto = useMemo(() => buildDatasetPreviewDto(debouncedForm), [debouncedForm])
 
   const { data: trainPreview, error: trainPreviewError, isFetching: previewLoading } =
     useTrainTomlPreview(trainPreviewDto)
   const { data: datasetPreview } =
     useDatasetTomlPreview(datasetDto)
 
-  // ── Submit ───────────────────────────────────────────────────────────────────
+  // ── Sample images helpers ─────────────────────────────────────────────────
+
+  const setSampleField = useCallback(
+    <K extends keyof SampleImagesConfig>(key: K, value: SampleImagesConfig[K]) =>
+      setSample(prev => ({ ...prev, [key]: value })),
+    [],
+  )
+
+  const addPrompt = useCallback(() =>
+    setSample(prev => ({ ...prev, prompts: [...prev.prompts, { ...BLANK_PROMPT }] })),
+    [],
+  )
+
+  const updatePrompt = useCallback((index: number, updated: SamplePromptInput) =>
+    setSample(prev => {
+      const prompts = [...prev.prompts]
+      prompts[index] = updated
+      return { ...prev, prompts }
+    }),
+    [],
+  )
+
+  const removePrompt = useCallback((index: number) =>
+    setSample(prev => ({ ...prev, prompts: prev.prompts.filter((_, i) => i !== index) })),
+    [],
+  )
+
+  const promptsPreview = useMemo(() => formatPromptsPreview(sample), [sample])
+
+  // ── Submit ────────────────────────────────────────────────────────────────
 
   const { mutate: createJob, isPending } = useCreateJob()
 
@@ -574,6 +757,21 @@ export default function NewJobPage() {
     !!form.output_name.trim() &&
     !!form.datasetRef &&
     !!form.pretrained_model_name_or_path
+
+  const buildSampleImages = (): SampleImagesConfig | undefined => {
+    const validPrompts = sample.prompts.filter(p => p.prompt.trim())
+    if (validPrompts.length === 0) return undefined
+
+    return {
+      prompts: validPrompts,
+      ...(sample.activationToken?.trim() && { activationToken: sample.activationToken.trim() }),
+      captionStyle: sample.captionStyle,
+      sampler: sample.sampler,
+      ...(sampleBySteps
+        ? { every_n_steps:  sample.every_n_steps  ?? 500 }
+        : { every_n_epochs: sample.every_n_epochs ?? 1   }),
+    }
+  }
 
   const handleSubmit = () => {
     createJob(
@@ -588,12 +786,13 @@ export default function NewJobPage() {
           num_repeats:     form.num_repeats   || undefined,
           class_tokens:    form.class_tokens  || undefined,
         },
+        sampleImages: buildSampleImages(),
       },
       { onSuccess: job => void navigate({ to: '/jobs/' + job.id }) },
     )
   }
 
-  // ── TOML preview content ─────────────────────────────────────────────────────
+  // ── TOML preview content ──────────────────────────────────────────────────
 
   const trainTomlContent = useMemo(() => {
     if (trainPreviewError) {
@@ -610,7 +809,7 @@ export default function NewJobPage() {
     return trainPreview?.toml ?? '# Fill in Name, Model, and Dataset to preview…'
   }, [trainPreview, trainPreviewError])
 
-  // ── Render ───────────────────────────────────────────────────────────────────
+  // ── Render ────────────────────────────────────────────────────────────────
 
   return (
     <Stack gap={0} h="100%" style={{ overflow: 'hidden' }}>
@@ -662,10 +861,10 @@ export default function NewJobPage() {
           style={{ maxWidth: 1400, margin: '0 auto', flexWrap: 'nowrap' }}
         >
 
-          {/* ── Left: Form ─────────────────────────────────────────────────── */}
+          {/* ── Left: Form ──────────────────────────────────────────────── */}
           <Stack style={{ flex: '1 1 0%', minWidth: 0 }}>
 
-            {/* Run */}
+            {/* ── Run ──────────────────────────────────────────────────── */}
             <SectionCard title="Run">
               <Group grow>
                 <TextInput
@@ -683,9 +882,49 @@ export default function NewJobPage() {
                   required size="sm" allowDeselect={false}
                 />
               </Group>
+
+              {/* Preset buttons — visible only when the API returns presets for this arch */}
+              {archPresets.length > 0 && (
+                <Stack gap={4}>
+                  <Text size="xs" c="dimmed">Quick preset</Text>
+                  <Group gap="xs" wrap="wrap">
+                    {/* System tier presets: Fast / Balanced / Quality */}
+                    {archPresets
+                      .filter(p => p.source === 'system' && p.tier !== 'custom')
+                      .map(p => (
+                        <Tooltip key={p.id} label={p.description} withArrow multiline maw={260}>
+                          <Button
+                            size="xs"
+                            variant="light"
+                            color={PRESET_TIER_COLOR[p.tier] ?? 'blue'}
+                            onClick={() => applyPreset(p)}
+                          >
+                            {p.label}
+                          </Button>
+                        </Tooltip>
+                      ))}
+
+                    {/* User presets */}
+                    {archPresets
+                      .filter(p => p.source === 'user')
+                      .map(p => (
+                        <Tooltip key={p.id} label={p.description || 'Custom preset'} withArrow>
+                          <Button
+                            size="xs"
+                            variant="outline"
+                            color="gray"
+                            onClick={() => applyPreset(p)}
+                          >
+                            {p.label}
+                          </Button>
+                        </Tooltip>
+                      ))}
+                  </Group>
+                </Stack>
+              )}
             </SectionCard>
 
-            {/* Dataset */}
+            {/* ── Dataset ──────────────────────────────────────────────── */}
             <SectionCard title="Dataset">
               <Group grow align="end">
                 <Select
@@ -740,10 +979,8 @@ export default function NewJobPage() {
               </Group>
             </SectionCard>
 
-            {/* Model — all driven by ModelSelect from API */}
+            {/* ── Model ─────────────────────────────────────────────────── */}
             <SectionCard title="Model">
-
-              {/* Main checkpoint / DiT — present for all archs */}
               <ModelSelect
                 label={
                   isFluxLike  ? 'FLUX / Chroma DiT'
@@ -760,7 +997,6 @@ export default function NewJobPage() {
                 models={mainModels}
               />
 
-              {/* FLUX: CLIP-L, T5-XXL, AE */}
               {isFlux && <>
                 <ModelSelect label="CLIP-L" required
                   value={form.clip_l} onChange={v => set('clip_l', v)} models={clipLModels} />
@@ -770,7 +1006,6 @@ export default function NewJobPage() {
                   value={form.ae} onChange={v => set('ae', v)} models={aeModels} />
               </>}
 
-              {/* Chroma: T5-XXL, AE (no CLIP-L) */}
               {isChroma && <>
                 <ModelSelect label="T5-XXL" required
                   value={form.t5xxl} onChange={v => set('t5xxl', v)} models={t5xxlModels} />
@@ -778,7 +1013,6 @@ export default function NewJobPage() {
                   value={form.ae} onChange={v => set('ae', v)} models={aeModels} />
               </>}
 
-              {/* SD3: CLIP-L, CLIP-G, T5-XXL, VAE — all optional for single-file format */}
               {isSd3 && <>
                 <ModelSelect label="CLIP-L (optional)"
                   value={form.clip_l} onChange={v => set('clip_l', v)} models={clipLModels} />
@@ -790,14 +1024,12 @@ export default function NewJobPage() {
                   value={form.vae} onChange={v => set('vae', v)} models={vaeModels} />
               </>}
 
-              {/* SDXL: VAE optional */}
               {isSdxl && (
                 <ModelSelect label="VAE (optional)"
                   description="Leave blank to use the VAE embedded in the checkpoint"
                   value={form.vae} onChange={v => set('vae', v)} models={vaeModels} />
               )}
 
-              {/* Anima: Qwen3, VAE */}
               {isAnima && <>
                 <ModelSelect label="Qwen3-0.6B" required
                   value={form.qwen3} onChange={v => set('qwen3', v)} models={qwen3Models} />
@@ -805,7 +1037,6 @@ export default function NewJobPage() {
                   value={form.vae} onChange={v => set('vae', v)} models={vaeModels} />
               </>}
 
-              {/* Lumina: Gemma2, AE */}
               {isLumina && <>
                 <ModelSelect label="Gemma2 text encoder" required
                   value={form.gemma2} onChange={v => set('gemma2', v)} models={gemma2Models} />
@@ -814,7 +1045,6 @@ export default function NewJobPage() {
                   value={form.ae} onChange={v => set('ae', v)} models={aeModels} />
               </>}
 
-              {/* HunyuanImage: Qwen2.5-VL, byT5, VAE */}
               {isHunyuan && <>
                 <ModelSelect label="Qwen2.5-VL text encoder" required
                   value={form.text_encoder} onChange={v => set('text_encoder', v)} models={qwen25VLModels} />
@@ -824,7 +1054,6 @@ export default function NewJobPage() {
                   value={form.vae} onChange={v => set('vae', v)} models={vaeModels} />
               </>}
 
-              {/* SD2: v_parameterization */}
               {isSd2 && (
                 <Switch label="V-parameterization"
                   description="Enable for SD2 768-v and SD2.1-v models"
@@ -833,7 +1062,7 @@ export default function NewJobPage() {
               )}
             </SectionCard>
 
-            {/* LoRA Network */}
+            {/* ── LoRA Network ─────────────────────────────────────────── */}
             <SectionCard title="LoRA Network">
               <Group grow>
                 <NumberInput label="Network dim (rank)" description="Higher = more capacity, more VRAM"
@@ -856,7 +1085,7 @@ export default function NewJobPage() {
               )}
             </SectionCard>
 
-            {/* Training */}
+            {/* ── Training ─────────────────────────────────────────────── */}
             <SectionCard title="Training">
               <Group align="end">
                 <Switch label="Train by steps instead of epochs"
@@ -904,7 +1133,7 @@ export default function NewJobPage() {
               </Group>
             </SectionCard>
 
-            {/* Advanced */}
+            {/* ── Advanced ─────────────────────────────────────────────── */}
             <Accordion variant="separated" radius="md">
               <Accordion.Item value="advanced">
                 <Accordion.Control icon={<IconChevronRight size={14} />}>
@@ -1009,9 +1238,139 @@ export default function NewJobPage() {
               </Accordion.Item>
             </Accordion>
 
+            {/* ── Preview Images ─────────────────────────────────────────── */}
+            <Accordion variant="separated" radius="md">
+              <Accordion.Item value="preview-images">
+                <Accordion.Control icon={<IconPhoto size={14} />}>
+                  <Group gap="xs">
+                    <Text size="sm" fw={500}>Preview images</Text>
+                    {sample.prompts.length > 0 && (
+                      <Badge size="xs" variant="light" color="blue">
+                        {sample.prompts.length} prompt{sample.prompts.length !== 1 ? 's' : ''}
+                      </Badge>
+                    )}
+                  </Group>
+                </Accordion.Control>
+                <Accordion.Panel>
+                  <Stack gap="md">
+
+                    <Text size="xs" c="dimmed">
+                      sd-scripts will call gen_img at checkpoints and write sample images
+                      next to the saved LoRA. Prompts are written to a{' '}
+                      <Code fz={11}>prompts.txt</Code> file using inline options
+                      {' '}(<Code fz={11}>--d</Code> seed, <Code fz={11}>--w/--h</Code> size,
+                      {' '}<Code fz={11}>--s</Code> steps, <Code fz={11}>--c</Code> cfg,
+                      {' '}<Code fz={11}>--n</Code> negative).
+                    </Text>
+
+                    {/* Timing */}
+                    <Group gap="sm" align="end" wrap="wrap">
+                      <Switch
+                        label="Trigger by steps"
+                        description="Off = every N epochs"
+                        checked={sampleBySteps}
+                        onChange={e => setSampleBySteps(e.currentTarget.checked)}
+                        size="sm"
+                      />
+                      {sampleBySteps ? (
+                        <NumberInput
+                          label="Every N steps"
+                          value={sample.every_n_steps ?? 500}
+                          onChange={v => setSampleField('every_n_steps', Number(v) || 500)}
+                          min={1} size="sm" style={{ maxWidth: 150 }}
+                        />
+                      ) : (
+                        <NumberInput
+                          label="Every N epochs"
+                          value={sample.every_n_epochs ?? 1}
+                          onChange={v => setSampleField('every_n_epochs', Number(v) || 1)}
+                          min={1} size="sm" style={{ maxWidth: 150 }}
+                        />
+                      )}
+                      <Select
+                        label="Sampler"
+                        data={SAMPLE_SAMPLERS}
+                        value={sample.sampler ?? 'euler_a'}
+                        onChange={v => setSampleField('sampler', v ?? 'euler_a')}
+                        size="sm" allowDeselect={false} style={{ maxWidth: 160 }}
+                      />
+                    </Group>
+
+                    {/* Token */}
+                    <Divider label="Activation token" labelPosition="left" />
+                    <Group gap="sm" align="end" wrap="wrap">
+                      <TextInput
+                        label="Token"
+                        description="Prepended to prompts with 'Without token' off"
+                        placeholder="e.g. @my_character"
+                        value={sample.activationToken ?? ''}
+                        onChange={e => setSampleField('activationToken', e.currentTarget.value)}
+                        size="sm" style={{ maxWidth: 180 }}
+                        styles={{ input: { fontFamily: 'monospace' } }}
+                      />
+                      <Select
+                        label="Join style"
+                        description='How token attaches to prompt'
+                        data={[
+                          { value: 'natural', label: 'Natural  —  token. Prompt…' },
+                          { value: 'tags',    label: 'Tags  —  token, prompt…' },
+                        ]}
+                        value={sample.captionStyle ?? 'natural'}
+                        onChange={v => setSampleField('captionStyle', (v ?? 'natural') as 'natural' | 'tags')}
+                        size="sm" allowDeselect={false} style={{ maxWidth: 240 }}
+                      />
+                    </Group>
+
+                    {/* Prompt list */}
+                    <Divider label="Prompts" labelPosition="left" />
+
+                    {sample.prompts.length === 0 ? (
+                      <Text size="xs" c="dimmed" ta="center" py={4}>
+                        No prompts — add one below.
+                      </Text>
+                    ) : (
+                      <Stack gap="xs">
+                        {sample.prompts.map((p, i) => (
+                          <PromptRow
+                            key={i}
+                            index={i}
+                            prompt={p}
+                            onChange={updatePrompt}
+                            onRemove={removePrompt}
+                          />
+                        ))}
+                      </Stack>
+                    )}
+
+                    <Button
+                      variant="light" size="xs"
+                      leftSection={<IconPlus size={12} />}
+                      onClick={addPrompt}
+                      style={{ alignSelf: 'flex-start' }}
+                    >
+                      Add prompt
+                    </Button>
+
+                    {/* Live prompts.txt preview */}
+                    {sample.prompts.length > 0 && (
+                      <>
+                        <Divider label="prompts.txt preview" labelPosition="left" />
+                        <ScrollArea mah={180}>
+                          <Code block fz={11} style={{ lineHeight: 1.6, whiteSpace: 'pre' }}>
+                            {promptsPreview}
+                          </Code>
+                        </ScrollArea>
+                      </>
+                    )}
+
+                  </Stack>
+                </Accordion.Panel>
+              </Accordion.Item>
+            </Accordion>
+
           </Stack>
 
-          {/* ── Right: TOML Preview (sticky) ──────────────────────────────── */}
+          {/* ── Right: TOML Preview (sticky) ─────────────────────────────── */}
           <Box
             style={{
               flex: '0 0 400px', position: 'sticky',
