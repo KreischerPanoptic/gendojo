@@ -93,7 +93,7 @@ export interface TrainingJob {
   finishedAt?: string;
   /**
    * Resolved output_dir for this job — where sd-scripts writes checkpoints.
-   * Defaults to {outputs}/{output_name}.
+   * Defaults to {outputs}/{jobId} (isolated per job to avoid cross-run collisions).
    */
   outputDir: string;
   /**
@@ -102,6 +102,12 @@ export interface TrainingJob {
    * Undefined when no sample image config was given.
    */
   samplePromptsPath?: string;
+  /**
+   * True when this job was loaded from a persisted job.json manifest after a
+   * container restart. Archived jobs have no live process and an empty logBuffer
+   * (the full log is still available at logFilePath on disk).
+   */
+  archived?: boolean;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

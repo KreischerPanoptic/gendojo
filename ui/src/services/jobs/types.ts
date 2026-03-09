@@ -34,6 +34,12 @@ export interface JobSummary {
   createdAt: string
   startedAt?: string
   finishedAt?: string
+  /**
+   * True when this job was restored from a persisted job.json manifest after a
+   * container restart. Archived jobs have no live process — their log is only
+   * available on disk at logFilePath.
+   */
+  archived?: boolean
 }
 
 export interface JobDetail extends JobSummary {
@@ -46,11 +52,6 @@ export interface JobDetail extends JobSummary {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Sample image generation
-//
-// Maps to sd-scripts --sample_prompts / --sample_every_n_epochs options.
-// Prompt format written to prompts file:
-//   <activationToken><sep><prompt> --d <seed> --w <w> --h <h> --s <steps> --c <cfg> [--n <neg>]
-// where sep = ". " (natural) or ", " (tags)
 // ─────────────────────────────────────────────────────────────────────────────
 
 export interface SamplePromptInput {

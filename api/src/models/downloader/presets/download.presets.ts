@@ -528,7 +528,7 @@ export const MODEL_PRESETS: ModelPreset[] = [
     source: 'huggingface',
     hfRepoId: 'circlestone-labs/Anima',
     hfFilename: 'split_files/text_encoders/qwen_3_06b_base.safetensors',
-    filename: 'qwen_3_06b_base.safetensors',
+    filename: 'qwen3-06b-base/qwen_3_06b_base.safetensors',
     sizeMb: 1_190,
     requiresHfToken: false,
     description: 'Qwen3-0.6B Base — text encoder for Anima. Passed as --qwen3.',

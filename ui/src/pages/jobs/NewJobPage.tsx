@@ -1266,7 +1266,7 @@ export default function NewJobPage() {
 
                     <Divider label="Output" labelPosition="left" />
                     <TextInput label="Output directory override"
-                      description="Leave blank to use /workspace/outputs"
+                      description="Leave blank — an isolated directory is created automatically under /workspace/outputs/{jobId}"
                       value={form.output_dir}
                       onChange={e => set('output_dir', e.currentTarget.value)}
                       placeholder="/workspace/outputs"

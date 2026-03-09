@@ -341,6 +341,11 @@ export default function JobDetailPage() {
                   <Badge variant="dot" color="blue" size="xs">
                     {job.script}
                   </Badge>
+                  {job.archived && (
+                    <Badge variant="outline" color="gray" size="xs">
+                      Archived
+                    </Badge>
+                  )}
                 </Group>
                 <Group gap="xs">
                   <Text size="xs" c="dimmed">

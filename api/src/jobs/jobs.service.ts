@@ -1,4 +1,4 @@
-import { Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
+import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { spawn, ChildProcess } from 'child_process';
 import * as fs from 'fs/promises';
 import * as fsSync from 'fs';
@@ -21,15 +21,17 @@ import {
   CreateJobDto,
   DatasetRefOptions,
   SampleImagesConfig,
-  SamplePromptInput,
   LogLine,
   LogStream,
   JobLogEvent,
   JobStatusEvent,
 } from './entities/jobs.types';
 
+/** Filename written inside every jobDir to survive container restarts */
+const JOB_MANIFEST_FILENAME = 'job.json';
+
 @Injectable()
-export class JobsService extends EventEmitter implements OnModuleDestroy {
+export class JobsService extends EventEmitter implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(JobsService.name);
 
   private readonly jobs      = new Map<string, TrainingJob>();
@@ -51,7 +53,27 @@ export class JobsService extends EventEmitter implements OnModuleDestroy {
   private get logBufferSize():        number { return this.settings.getTraining().logBufferSize;       }
   private get cpuThreadsPerProcess(): string { return String(this.settings.getTraining().cpuThreadsPerProcess); }
 
+  /**
+   * Base directory that holds all per-job subdirectories.
+   * Derived from PathsConfig.jobDir() so the two always stay in sync.
+   * e.g. /workspace/gendojo/jobs
+   */
+  private get jobsBaseDir(): string {
+    return path.dirname(this.paths.jobDir('_probe_'));
+  }
+
   // ── Lifecycle ──────────────────────────────────────────────────────────────
+
+  /**
+   * On startup, scan the jobs base directory for persisted job.json manifests
+   * and restore them into memory as archived jobs.
+   *
+   * Jobs that were Running or Pending when the container died are marked Failed
+   * (the process is gone and cannot be recovered).
+   */
+  async onModuleInit(): Promise<void> {
+    await this.restoreArchivedJobs();
+  }
 
   async onModuleDestroy(): Promise<void> {
     this.logger.log('Module destroying — sending SIGTERM to all running processes');
@@ -83,11 +105,16 @@ export class JobsService extends EventEmitter implements OnModuleDestroy {
     const trainTomlPath   = path.join(jobDir, 'train.toml');
     const logFilePath     = path.join(jobDir, 'train.log');
 
-    // 4. Resolve output_dir early — needed for outputDir record field and
-    //    sample_prompts injection into train config
-    const outputName = dto.train.output_name || 'untitled';
-    const outputDir  = (dto.train.output_dir as string | undefined)
-      || path.join(this.paths.outputs, outputName);
+    // 4. Resolve output_dir.
+    //    Default: {outputs}/{outputName}/{jobId}-{ISODate}
+    //      - Top-level folder groups runs by name → easy navigation in the FS
+    //      - Sub-folder is unique per run → no cross-run checkpoint collisions
+    //        (especially important during iterative testing with the same name)
+    //    An explicit output_dir in the DTO overrides this default.
+    const outputName  = dto.train.output_name || 'untitled';
+    const isoDate     = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19); // YYYY-MM-DDTHH-MM-SS
+    const outputDir   = (dto.train.output_dir as string | undefined)
+      ?? path.join(this.paths.outputs, outputName, `${jobId}-${isoDate}`);
 
     // 5. Build enriched train DTO.
     //    Inject dataset_config and output_dir, then sample params if configured.
@@ -162,7 +189,7 @@ export class JobsService extends EventEmitter implements OnModuleDestroy {
     // 12. Register job record
     const job: TrainingJob = {
       id: jobId,
-      name: dto.train.output_name,
+      name: outputName,
       arch: dto.train.arch,
       datasetName,
       jobDir,
@@ -178,6 +205,10 @@ export class JobsService extends EventEmitter implements OnModuleDestroy {
       samplePromptsPath,
     };
     this.jobs.set(jobId, job);
+
+    // 13. Persist manifest before launching — ensures the job survives even
+    //     if the container dies between creation and process start.
+    await this.persistJob(job);
 
     this.launch(job);
 
@@ -210,8 +241,10 @@ export class JobsService extends EventEmitter implements OnModuleDestroy {
 
     // Mark as killed BEFORE sending signal — the 'close' handler checks this
     // and must not overwrite it with 'failed' after a user-initiated kill.
-    job.status = JobStatus.Killed;
+    job.status     = JobStatus.Killed;
+    job.finishedAt = new Date().toISOString();
     this.emit('job:status', { jobId: id, status: JobStatus.Killed } as JobStatusEvent);
+    void this.persistJob(job);
 
     const pgid = proc.pid;
     this.logger.log(`Killing job ${id} (PID ${pgid}, process group -${pgid})`);
@@ -238,6 +271,106 @@ export class JobsService extends EventEmitter implements OnModuleDestroy {
     }
 
     return true;
+  }
+
+  // ── Job persistence ────────────────────────────────────────────────────────
+
+  /**
+   * Write a job.json manifest to the job directory.
+   * The manifest is a serialised snapshot of the TrainingJob record minus the
+   * in-memory logBuffer (the full log is already on disk at logFilePath).
+   *
+   * Called at every significant lifecycle transition so the latest status is
+   * always persisted before a potential container restart.
+   */
+  private async persistJob(job: TrainingJob): Promise<void> {
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const { logBuffer: _lb, ...manifest } = job;
+    const manifestPath = path.join(job.jobDir, JOB_MANIFEST_FILENAME);
+    try {
+      await fs.writeFile(manifestPath, JSON.stringify(manifest, null, 2), 'utf8');
+    } catch (err) {
+      this.logger.error(`Failed to persist manifest for job ${job.id}: ${(err as Error).message}`);
+    }
+  }
+
+  /**
+   * Scan the jobs base directory for existing job.json manifests and restore
+   * them into memory as archived (read-only) jobs.
+   *
+   * Only runs on module init — live jobs created in this process are never
+   * treated as archived.
+   *
+   * Jobs that were Running or Pending when the container died are promoted to
+   * Failed because their process no longer exists.
+   */
+  private async restoreArchivedJobs(): Promise<void> {
+    const baseDir = this.jobsBaseDir;
+
+    let entries: string[];
+    try {
+      entries = await fs.readdir(baseDir);
+    } catch {
+      // Base dir doesn't exist yet — no jobs to restore
+      this.logger.debug('Jobs base directory not found — skipping archive restore');
+      return;
+    }
+
+    let restoredCount  = 0;
+    let promotedCount  = 0;
+
+    for (const entry of entries) {
+      const manifestPath = path.join(baseDir, entry, JOB_MANIFEST_FILENAME);
+
+      let raw: string;
+      try {
+        raw = await fs.readFile(manifestPath, 'utf8');
+      } catch {
+        // Not a job directory or manifest missing — skip silently
+        continue;
+      }
+
+      let manifest: Omit<TrainingJob, 'logBuffer'>;
+      try {
+        manifest = JSON.parse(raw) as Omit<TrainingJob, 'logBuffer'>;
+      } catch (err) {
+        this.logger.warn(`Corrupt job manifest at ${manifestPath} — skipping`);
+        continue;
+      }
+
+      if (!manifest.id || !manifest.status) {
+        this.logger.warn(`Incomplete job manifest at ${manifestPath} — skipping`);
+        continue;
+      }
+
+      // Skip if we somehow already have this job (shouldn't happen on init)
+      if (this.jobs.has(manifest.id)) continue;
+
+      const job: TrainingJob = {
+        ...manifest,
+        logBuffer: [],  // log is on disk; in-memory buffer starts empty
+        archived:  true,
+      };
+
+      // Jobs that were mid-flight when the container died can never be resumed
+      if (job.status === JobStatus.Running || job.status === JobStatus.Pending) {
+        job.status     = JobStatus.Failed;
+        job.finishedAt = job.finishedAt ?? new Date().toISOString();
+        promotedCount++;
+        // Persist the corrected status back to disk
+        void this.persistJob(job);
+      }
+
+      this.jobs.set(job.id, job);
+      restoredCount++;
+    }
+
+    if (restoredCount > 0) {
+      this.logger.log(
+        `Restored ${restoredCount} archived job(s) from ${baseDir}` +
+        (promotedCount > 0 ? ` (${promotedCount} promoted Running→Failed)` : ''),
+      );
+    }
   }
 
   // ── Sample prompts serialisation ──────────────────────────────────────────
@@ -411,6 +544,9 @@ export class JobsService extends EventEmitter implements OnModuleDestroy {
     job.startedAt = new Date().toISOString();
     this.processes.set(job.id, proc);
 
+    // Persist Running status + pid so a crash here is recoverable
+    void this.persistJob(job);
+
     const logStream = fsSync.createWriteStream(job.logFilePath, { flags: 'a' });
     let logStreamClosed = false;
 
@@ -455,6 +591,8 @@ export class JobsService extends EventEmitter implements OnModuleDestroy {
         this.emit('job:status', { jobId: job.id, status: job.status, exitCode } as JobStatusEvent);
       }
 
+      void this.persistJob(job);
+
       this.logger.log(
         `Job ${job.id} finished: status=${job.status}, exit=${exitCode}, signal=${signal ?? '-'}`,
       );
@@ -469,6 +607,7 @@ export class JobsService extends EventEmitter implements OnModuleDestroy {
       safeAppendLog({ ts: Date.now(), stream: 'stderr', text: `[process error] ${err.message}` });
       safeEndStream();
 
+      void this.persistJob(job);
       this.emit('job:status', { jobId: job.id, status: JobStatus.Failed } as JobStatusEvent);
     });
 
