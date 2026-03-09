@@ -2,11 +2,12 @@ import {
   Controller,
   Get,
   Post,
+  Put,
+  Patch,
   Delete,
   Param,
   Body,
   UploadedFile,
-  UploadedFiles,
   UseInterceptors,
   HttpCode,
   HttpStatus,
@@ -17,7 +18,7 @@ import {
   Res,
   NotFoundException,
 } from '@nestjs/common';
-import { FileInterceptor, FileFieldsInterceptor } from '@nestjs/platform-express';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { memoryStorage } from 'multer';
 import type { Response } from 'express';
 import * as path from 'path';
@@ -25,8 +26,9 @@ import * as fs from 'fs/promises';
 
 import { DatasetsService } from './datasets.service';
 import { SkipAuth } from 'src/auth/skip-auth.decorator';
+import type { DatasetMetaUpdate, PrependMode } from './entities/dataset-info.types';
 
-// 500 MB zip limit — RunPod disks are large, but let's be reasonable
+// 500 MB zip limit
 const ZIP_MAX_SIZE_BYTES = 500 * 1024 * 1024;
 
 // 50 MB per individual file
@@ -39,84 +41,62 @@ const IMAGE_MIME: Record<string, string> = {
   '.webp': 'image/webp',
 };
 
+const VALID_PREPEND_MODES = new Set<PrependMode>([
+  'tag_list',
+  'nl_prefix',
+  'nl_style',
+  'nl_character',
+]);
+
 /**
  * REST API for managing training datasets.
  *
- * GET    /datasets                              — list all datasets
- * GET    /datasets/:name                        — detail + image list
- * GET    /datasets/:name/images/:filename       — serve a single image file
- * DELETE /datasets/:name                        — remove dataset directory
+ * ── Read ────────────────────────────────────────────────────────────────────
+ * GET    /datasets                                  list all datasets
+ * GET    /datasets/:name                            detail + image list + captionStats
+ * GET    /datasets/:name/images/:filename           serve image file  [@SkipAuth]
+ * GET    /datasets/:name/export                     download dataset as zip
  *
- * POST   /datasets/upload/zip                   — upload zip → extract to /workspace/datasets/<n>/
- * POST   /datasets/upload/files                 — upload individual files (multipart)
- * POST   /datasets/:name/captions/:image        — upsert caption for a single image
+ * ── Upload ──────────────────────────────────────────────────────────────────
+ * POST   /datasets/upload/zip                       upload zip archive
+ * POST   /datasets/upload/file                      upload single file
+ * PUT    /datasets/:name/images/:filename           replace existing image
+ *
+ * ── Captions ────────────────────────────────────────────────────────────────
+ * GET    /datasets/:name/captions/:image            get caption + stats
+ * POST   /datasets/:name/captions/:image            upsert caption
+ * DELETE /datasets/:name/captions/:image            clear caption
+ * POST   /datasets/:name/captions/prepend-token     bulk prepend activation token
+ *
+ * ── Metadata ────────────────────────────────────────────────────────────────
+ * GET    /datasets/:name/meta                       get dataset.meta.json
+ * PATCH  /datasets/:name/meta                       update dataset.meta.json
+ * POST   /datasets/:name/detect-caption-type        auto-detect + persist caption type
+ *
+ * ── Delete ──────────────────────────────────────────────────────────────────
+ * DELETE /datasets/:name/images/:filename           delete single image
+ * DELETE /datasets/:name                            delete entire dataset
+ *
+ * NOTE: static sub-routes (upload/zip, upload/file, captions/prepend-token,
+ * detect-caption-type, meta, export) are declared BEFORE parameterised routes
+ * (:name, :name/images/:filename, etc.) to avoid path-to-regexp v8 conflicts.
  */
 @Controller('datasets')
 export class DatasetsController {
   constructor(private readonly datasetsService: DatasetsService) {}
 
-  // ── Read ───────────────────────────────────────────────────────────────────
-
-  /** GET /datasets */
-  @Get()
-  list() {
-    return this.datasetsService.list();
-  }
-
-  /** GET /datasets/:name */
-  @Get(':name')
-  getOne(@Param('name') name: string) {
-    return this.datasetsService.getOne(name);
-  }
-
-  /**
-   * GET /datasets/:name/images/:filename
-   *
-   * Serves a single image file from the dataset directory.
-   * The filename must be an image supported by sd-scripts (jpg/jpeg/png/webp).
-   *
-   * Used by the UI to render image thumbnails and previews in the dataset editor.
-   *
-   * Security: filename is stripped of any path separators to prevent traversal.
-   */
-  @SkipAuth()
-  @Get(':name/images/:filename')
-  async serveImage(
-    @Param('name') name: string,
-    @Param('filename') filename: string,
-    @Res() res: Response,
-  ) {
-    // Strip any path separators — no traversal allowed
-    const safeFilename = path.basename(filename);
-    const ext = path.extname(safeFilename).toLowerCase();
-
-    const mimeType = IMAGE_MIME[ext];
-    if (!mimeType) {
-      throw new BadRequestException(`Unsupported image extension: ${ext}`);
-    }
-
-    const imagePath = await this.datasetsService.resolveImagePath(name, safeFilename);
-
-    try {
-      await fs.access(imagePath);
-    } catch {
-      throw new NotFoundException(`Image "${safeFilename}" not found in dataset "${name}"`);
-    }
-
-    res.setHeader('Content-Type', mimeType);
-    res.setHeader('Cache-Control', 'public, max-age=3600');
-    res.sendFile(imagePath);
-  }
-
-  // ── Upload ZIP ─────────────────────────────────────────────────────────────
+  // ══════════════════════════════════════════════════════════════════════════
+  // STATIC / UPLOAD ROUTES  (must come before :name routes)
+  // ══════════════════════════════════════════════════════════════════════════
 
   /**
    * POST /datasets/upload/zip
    *
    * Multipart body:
-   *   file      — the zip archive
-   *   name      — target dataset directory name (e.g. "my_char")
-   *   overwrite — "true" | "false" (default "true")
+   *   file  — zip archive (max 500 MB)
+   *   name  — target dataset name
+   * Query:
+   *   overwrite — "false" to reject if dataset already exists (default: true)
    */
   @Post('upload/zip')
   @HttpCode(HttpStatus.CREATED)
@@ -136,20 +116,14 @@ export class DatasetsController {
     @Body('name') name: string,
     @Query('overwrite') overwrite?: string,
   ) {
-    if (!name) {
-      throw new BadRequestException('Body field "name" is required');
-    }
-    const shouldOverwrite = overwrite !== 'false';
-    return this.datasetsService.uploadZip(name, file.buffer, shouldOverwrite);
+    if (!name) throw new BadRequestException('Body field "name" is required');
+    return this.datasetsService.uploadZip(name, file.buffer, overwrite !== 'false');
   }
 
-  // ── Upload individual files ────────────────────────────────────────────────
-
   /**
-   * POST /datasets/upload/files?name=<dataset_name>
+   * POST /datasets/upload/file?name=<dataset_name>
    *
-   * Multipart body: field "files[]" — one or more image (.jpg/.png/.webp) or
-   * caption (.txt) files. Files are sent one per request, called in parallel.
+   * Multipart field "file" — single image or caption file (max 50 MB).
    */
   @Post('upload/file')
   @HttpCode(HttpStatus.CREATED)
@@ -168,21 +142,151 @@ export class DatasetsController {
     file: Express.Multer.File,
     @Query('name') name: string,
   ) {
-    if (!name) {
-      throw new BadRequestException('Query param "name" is required');
-    }
+    if (!name) throw new BadRequestException('Query param "name" is required');
     return this.datasetsService.uploadFiles(name, [file]);
   }
 
-  // ── Caption management ─────────────────────────────────────────────────────
+  // ══════════════════════════════════════════════════════════════════════════
+  // READ
+  // ══════════════════════════════════════════════════════════════════════════
+
+  /** GET /datasets */
+  @Get()
+  list() {
+    return this.datasetsService.list();
+  }
+
+  /** GET /datasets/:name — includes per-image captionStats and captionLengthSummary */
+  @Get(':name')
+  getOne(@Param('name') name: string) {
+    return this.datasetsService.getOne(name);
+  }
+
+  /**
+   * GET /datasets/:name/images/:filename
+   *
+   * Serves a raw image file for UI thumbnails/previews.
+   * @SkipAuth — images are referenced directly from <img> tags in the UI.
+   * Security: filename is stripped of path separators.
+   */
+  @SkipAuth()
+  @Get(':name/images/:filename')
+  async serveImage(
+    @Param('name') name: string,
+    @Param('filename') filename: string,
+    @Res() res: Response,
+  ) {
+    const safeFilename = path.basename(filename);
+    const ext = path.extname(safeFilename).toLowerCase();
+
+    const mimeType = IMAGE_MIME[ext];
+    if (!mimeType) {
+      throw new BadRequestException(`Unsupported image extension: ${ext}`);
+    }
+
+    const imagePath = await this.datasetsService.resolveImagePath(name, safeFilename);
+
+    try {
+      await fs.access(imagePath);
+    } catch {
+      throw new NotFoundException(
+        `Image "${safeFilename}" not found in dataset "${name}"`,
+      );
+    }
+
+    res.setHeader('Content-Type', mimeType);
+    res.setHeader('Cache-Control', 'public, max-age=3600');
+    res.sendFile(imagePath);
+  }
+
+  /**
+   * GET /datasets/:name/export
+   *
+   * Streams the dataset as a zip archive (images + captions + meta.json).
+   */
+  @Get(':name/export')
+  async exportZip(@Param('name') name: string, @Res() res: Response) {
+    await this.datasetsService.exportZip(name, res);
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // UPLOAD — replace image
+  // ══════════════════════════════════════════════════════════════════════════
+
+  /**
+   * PUT /datasets/:name/images/:filename
+   *
+   * Replace an existing image in place. Caption is preserved.
+   * Multipart field "file" — must be same extension as :filename.
+   */
+  @Put(':name/images/:filename')
+  @HttpCode(HttpStatus.OK)
+  @UseInterceptors(
+    FileInterceptor('file', {
+      storage: memoryStorage(),
+      limits: { fileSize: FILE_MAX_SIZE_BYTES },
+    }),
+  )
+  async replaceImage(
+    @Param('name') name: string,
+    @Param('filename') filename: string,
+    @UploadedFile(
+      new ParseFilePipe({
+        validators: [new MaxFileSizeValidator({ maxSize: FILE_MAX_SIZE_BYTES })],
+      }),
+    )
+    file: Express.Multer.File,
+  ) {
+    return this.datasetsService.replaceImage(name, filename, file);
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // CAPTIONS
+  // ══════════════════════════════════════════════════════════════════════════
+
+  /**
+   * POST /datasets/:name/captions/prepend-token
+   *
+   * Bulk-prepend an activation token to all caption files.
+   *
+   * Body:
+   *   token        — activation token string (required)
+   *   mode         — 'tag_list' | 'nl_prefix' | 'nl_style' | 'nl_character'
+   *                  (default: 'tag_list')
+   *   skipExisting — skip captions that already start with the token
+   *                  (default: true)
+   *
+   * IMPORTANT: declared before :name/captions/:image to avoid "prepend-token"
+   * being matched as :image by Express.
+   */
+  @Post(':name/captions/prepend-token')
+  @HttpCode(HttpStatus.OK)
+  async prependToken(
+    @Param('name') name: string,
+    @Body() body: { token: string; mode?: PrependMode; skipExisting?: boolean },
+  ) {
+    if (!body?.token) {
+      throw new BadRequestException('Body must contain { token: string }');
+    }
+    const mode: PrependMode = body.mode ?? 'tag_list';
+    if (!VALID_PREPEND_MODES.has(mode)) {
+      throw new BadRequestException(
+        `Invalid mode "${mode}". Valid: ${[...VALID_PREPEND_MODES].join(', ')}`,
+      );
+    }
+    return this.datasetsService.prependToken(
+      name,
+      body.token,
+      mode,
+      body.skipExisting ?? true,
+    );
+  }
 
   /**
    * GET /datasets/:name/captions/:image
    *
-   * Returns the caption text for a given image.
-   * Responds with { caption: string } if the .txt file exists,
-   * or { caption: null } if no caption has been written yet.
-   * Never returns 404 for a missing caption — absence is valid.
+   * Returns { caption: string | null, captionStats: CaptionStats | null }.
+   * Never 404 for missing caption.
    */
   @Get(':name/captions/:image')
   @HttpCode(HttpStatus.OK)
@@ -190,39 +294,106 @@ export class DatasetsController {
     @Param('name') name: string,
     @Param('image') image: string,
   ) {
-    const safeImage = path.basename(image);
-    return this.datasetsService.getCaption(name, safeImage);
+    return this.datasetsService.getCaption(name, path.basename(image));
   }
 
   /**
    * POST /datasets/:name/captions/:image
    *
-   * Body: JSON { caption: string }
-   * Creates or overwrites the .txt caption file matching the image name.
+   * Body: { caption: string }
+   * Creates or overwrites the .txt caption file. Returns captionStats.
    */
   @Post(':name/captions/:image')
   @HttpCode(HttpStatus.OK)
   async upsertCaption(
     @Param('name') name: string,
     @Param('image') image: string,
-    @Body() body: string | { caption: string },
+    @Body() body: { caption: string },
   ) {
-    const caption =
-      typeof body === 'string' ? body : (body as { caption: string }).caption;
-
-    if (!caption || typeof caption !== 'string') {
-      throw new BadRequestException('Caption text is required in request body');
+    const caption = body?.caption;
+    if (typeof caption !== 'string') {
+      throw new BadRequestException('Body must contain { caption: string }');
     }
-
-    return this.datasetsService.upsertCaption(name, image, caption);
+    return this.datasetsService.upsertCaption(name, path.basename(image), caption);
   }
 
-  // ── Delete ─────────────────────────────────────────────────────────────────
+  /**
+   * DELETE /datasets/:name/captions/:image
+   *
+   * Removes the .txt caption file. Idempotent.
+   */
+  @Delete(':name/captions/:image')
+  @HttpCode(HttpStatus.OK)
+  async deleteCaption(
+    @Param('name') name: string,
+    @Param('image') image: string,
+  ) {
+    return this.datasetsService.deleteCaption(name, path.basename(image));
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // METADATA
+  // ══════════════════════════════════════════════════════════════════════════
+
+  /**
+   * GET /datasets/:name/meta
+   *
+   * Returns dataset.meta.json contents, or null if not yet created.
+   */
+  @Get(':name/meta')
+  async getMeta(@Param('name') name: string) {
+    return this.datasetsService.getMeta(name);
+  }
+
+  /**
+   * PATCH /datasets/:name/meta
+   *
+   * Merge-updates dataset.meta.json.
+   * Body: Partial<{ activationToken, captionType, notes }>
+   */
+  @Patch(':name/meta')
+  @HttpCode(HttpStatus.OK)
+  async updateMeta(
+    @Param('name') name: string,
+    @Body() body: DatasetMetaUpdate,
+  ) {
+    return this.datasetsService.updateMeta(name, body);
+  }
+
+  /**
+   * POST /datasets/:name/detect-caption-type
+   *
+   * Samples captions, determines style (tag_list / natural_language / mixed),
+   * persists to dataset.meta.json, returns detection stats.
+   */
+  @Post(':name/detect-caption-type')
+  @HttpCode(HttpStatus.OK)
+  async detectCaptionType(@Param('name') name: string) {
+    return this.datasetsService.detectCaptionType(name);
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // DELETE
+  // ══════════════════════════════════════════════════════════════════════════
+
+  /**
+   * DELETE /datasets/:name/images/:filename
+   *
+   * Permanently removes an image and its companion caption file.
+   */
+  @Delete(':name/images/:filename')
+  @HttpCode(HttpStatus.OK)
+  async deleteImage(
+    @Param('name') name: string,
+    @Param('filename') filename: string,
+  ) {
+    return this.datasetsService.deleteImage(name, path.basename(filename));
+  }
 
   /**
    * DELETE /datasets/:name
    *
-   * Permanently removes the dataset directory and all its contents.
+   * Permanently removes the entire dataset directory.
    */
   @Delete(':name')
   @HttpCode(HttpStatus.OK)

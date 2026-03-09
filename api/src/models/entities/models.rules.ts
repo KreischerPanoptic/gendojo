@@ -50,7 +50,7 @@ export const CLASSIFY_RULES: ClassifyRule[] = [
   { pattern: /qwen[_-]?2[._-]?5[._-]?vl/, arch: 'hunyuan', role: 'qwen2_5_vl' },
 
   // byT5 — HunyuanImage (--byt5)
-  { pattern: /\bbyt5\b/,          arch: 'hunyuan',  role: 'byt5' },
+  { pattern: /\bbyt5/,            arch: 'hunyuan',  role: 'byt5' },
 
   // LLM Adapter — Anima bridge module (--llm_adapter_path, optional)
   { pattern: /llm[_-]?adapter/,   arch: 'anima',    role: 'llm_adapter' },

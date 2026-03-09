@@ -31,8 +31,8 @@ import { useJobOutputs, outputsApi } from '@services/jobs/outputs'
 import type { Checkpoint, SamplePrompt } from '@services/jobs/outputs'
 import type { ModelArchitecture } from '@services/models'
 import { LightboxModal } from '@ui/LightboxModal'
-import { makePreviewSidePanel } from '@blocks/PreviewSidePanel'
-import type { PreviewMeta } from '@blocks/PreviewSidePanel'
+import { makePreviewSidePanel } from '@blocks/SidePanels/PreviewSidePanel'
+import type { PreviewMeta } from '@blocks/SidePanels/PreviewSidePanel'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers

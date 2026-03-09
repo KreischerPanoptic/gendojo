@@ -1,5 +1,5 @@
 import { IsEnum, IsOptional, IsString, ValidateIf } from 'class-validator';
-import type { ModelArchitecture, ModelRole } from '../../models/entities/models.types';
+import type { ModelArchitecture, ModelRole } from '../../entities/models.types';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Domain types
@@ -100,4 +100,16 @@ export interface ModelPreset {
   /** Whether a HuggingFace token is needed (gated model) */
   requiresHfToken: boolean;
   description?: string;
+  /**
+   * Expected SHA-256 hash of the downloaded file (lowercase hex, 64 chars).
+   *
+   * Fill this in manually from the HuggingFace file page:
+   *   repo → Files tab → click file → copy SHA256 icon
+   *
+   * When present, DownloaderService will automatically run an integrity check
+   * after the download completes and set a warning if the hash doesn't match.
+   * The hash is also registered into model-hashes.registry.ts at runtime
+   * so subsequent GET /models/integrity calls can use it.
+   */
+  sha256?: string;
 }

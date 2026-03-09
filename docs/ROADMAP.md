@@ -9,7 +9,16 @@
 - `SettingsService` — merges env var defaults with persisted `settings.json` at `/workspace/gendojo/settings.json`; settings controller with full GET/PUT API
 - `TokensService` — stores HuggingFace and CivitAI tokens on disk; tokens are masked in all API responses (set flag + last-4 hint only)
 - `ModelsService` — scans model volumes with two-pass arch+role classification via ordered regex rules; `ARCH_ROLE_DIR` mapping for known subdirectory layouts
-- `DatasetsModule` — full REST API: ZIP upload with automatic single-folder flattening, caption upsert, caption coverage stats, path traversal protection
+- `DatasetsModule` — full REST API for dataset management:
+  - ZIP upload with automatic single-folder flattening and auto caption-type detection on first upload
+  - Individual file upload, image replace (PUT), image delete (with companion caption cleanup)
+  - Caption upsert, caption delete (idempotent), caption read with inline `CaptionStats`
+  - Bulk prepend activation token — 4 modes: `tag_list`, `nl_prefix`, `nl_style`, `nl_character`
+  - `dataset.meta.json` — per-dataset metadata: activation token, caption type, notes, createdAt
+  - Manual caption-type detection endpoint (samples up to 30 captions with heuristic classifier)
+  - Caption length stats — char count, word count, `isLongForClip` (>200 chars), `isLongForT5` (>900 chars) per image; aggregate `CaptionLengthSummary` on `getOne()`
+  - Dataset export as zip (streamed, no temp file)
+  - Path traversal protection throughout
 - `DownloaderService` — downloads from HuggingFace (with `HF_TOKEN` auth header) and CivitAI (with token query param); progress tracking, cancellation, redirect following, model preset catalog, triggers `ModelsService.refresh()` on completion
 - `JobsService` — spawns `accelerate launch` processes, ring buffer with disk persistence, tqdm carriage-return stderr handling, `MAX_CONCURRENT_JOBS=1` enforcement
 - `JobsGateway` — Socket.IO gateway on `/jobs` namespace with room-based log streaming and history replay on reconnect
@@ -33,6 +42,7 @@
 
 ### Dataset preparation
 
+- [ ] **Token length preview** — WASM tokenizers (`@xenova/transformers`) in the browser for CLIP (77 tok) and T5 (256 tok); show per-caption token count and truncation cut point in the caption editor. Server already returns `isLongForClip` / `isLongForT5` as a cheap approximation.
 - [ ] WD14 auto-tagging — run `tag_images_by_wd14_tagger.py` as a managed job, stream results back
 - [ ] VLM captioning — OpenAI / Gemini / local Qwen; caption from image + existing tags
 - [ ] Bulk caption operations — find/replace across all captions, tag frequency view
@@ -54,8 +64,7 @@
 
 - [ ] pHash duplicate detection
 - [ ] Resolution / bucket distribution preview
-- [ ] Token length distribution (truncation audit)
-- [ ] Caption format consistency check
+- [ ] Caption format consistency check (expand on existing `captionType` detection)
 
 ### Infrastructure
 

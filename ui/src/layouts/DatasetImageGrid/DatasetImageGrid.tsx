@@ -6,6 +6,7 @@ export function DatasetImageGrid({
   images,
   datasetName,
   onImageClick,
+  editMode,
   selectedIndex,
   scrollAreaStyle = { flex: 1 },
 }: DatasetImageGridProps) {
@@ -20,6 +21,7 @@ export function DatasetImageGrid({
           <ImageCard
             key={image.filename}
             image={image}
+            editMode={editMode}
             datasetName={datasetName}
             isSelected={selectedIndex !== undefined && index === selectedIndex}
             onClick={() => onImageClick(index)}

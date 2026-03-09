@@ -11,10 +11,10 @@ import * as fs from 'fs';
 import * as fsp from 'fs/promises';
 import * as path from 'path';
 import { randomUUID } from 'crypto';
-import { PathsConfig } from '../config/paths.config';
-import { ModelsService } from '../models/models.service';
-import { ARCH_ROLE_DIR } from '../models/entities/models.constants';
-import type { ModelArchitecture, ModelRole } from '../models/entities/models.types';
+import { PathsConfig } from '../../config/paths.config';
+import { ModelsService } from '../models.service';
+import { ARCH_ROLE_DIR } from '../entities/models.constants';
+import type { ModelArchitecture, ModelRole } from '../entities/models.types';
 import {
   DownloadJob,
   DownloadSource,

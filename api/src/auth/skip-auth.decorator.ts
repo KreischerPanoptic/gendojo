@@ -3,8 +3,8 @@ import { SetMetadata } from '@nestjs/common';
 export const IS_PUBLIC_KEY = 'isPublic';
 
 /**
- * Помечает роут как публичный — AuthGuard его пропустит.
- * Используй для: POST /auth/login, health-check и т.п.
+ * Marking route as public — AuthGuard skips it.
+ * Used for: POST /auth/login, health-check, etc.
  *
  * @example
  * @SkipAuth()

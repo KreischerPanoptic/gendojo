@@ -3,17 +3,21 @@ import {
   Box,
   Button,
   Divider,
+  Group,
   Skeleton,
   Stack,
   Text,
   Textarea,
+  Tooltip,
 } from '@mantine/core'
 import {
   IconAlertCircle,
+  IconAlertTriangle,
   IconDeviceFloppy,
   IconPhotoOff,
+  IconTrash,
 } from '@tabler/icons-react'
-import type { DatasetImage } from '@services/datasets'
+import type { CaptionStats, DatasetImage } from '@services/datasets'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Props
@@ -21,10 +25,11 @@ import type { DatasetImage } from '@services/datasets'
 
 export interface CaptionEditFormProps {
   image: DatasetImage
-  /** Pre-built image URL from datasetsApi.getImageUrl */
   src: string
   captionLoading: boolean
   localCaption: string
+  /** Stats computed from localCaption in real-time (null when textarea is loading) */
+  captionStats: CaptionStats | null
   isDirty: boolean
   isSaving: boolean
   isError: boolean
@@ -33,6 +38,9 @@ export interface CaptionEditFormProps {
   onImgError: () => void
   onChange: (value: string) => void
   onSave: () => void
+  /** Called when user clicks "Clear caption" — deletes the .txt file */
+  onDeleteCaption: () => void
+  isDeletingCaption: boolean
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -44,6 +52,7 @@ export function CaptionEditForm({
   src,
   captionLoading,
   localCaption,
+  captionStats,
   isDirty,
   isSaving,
   isError,
@@ -52,6 +61,8 @@ export function CaptionEditForm({
   onImgError,
   onChange,
   onSave,
+  onDeleteCaption,
+  isDeletingCaption,
 }: CaptionEditFormProps) {
   return (
     <>
@@ -128,18 +139,76 @@ export function CaptionEditForm({
         />
       )}
 
-      {/* Save button */}
-      <Button
-        leftSection={<IconDeviceFloppy size={15} />}
-        disabled={!isDirty || isSaving || captionLoading}
-        loading={isSaving}
-        onClick={onSave}
-        variant={isDirty ? 'filled' : 'outline'}
-        color={isDirty ? 'orange' : 'gray'}
-        size="sm"
-      >
-        {isDirty ? 'Save Caption' : 'Saved'}
-      </Button>
+      {/* Caption stats — real-time length feedback */}
+      {!captionLoading && captionStats && (
+        <Stack gap={4}>
+          <Group gap="xs" wrap="wrap">
+            <Text size="xs" c="dimmed" style={{ fontVariantNumeric: 'tabular-nums' }}>
+              {captionStats.charCount} chars · {captionStats.wordCount} words
+            </Text>
+
+            {captionStats.isLongForClip && (
+              <Tooltip
+                label="Caption likely exceeds 77 tokens (CLIP limit). May be truncated for SD 1/2/SDXL training."
+                multiline
+                maw={260}
+                withArrow
+              >
+                <Group gap={3} style={{ cursor: 'default' }}>
+                  <IconAlertTriangle size={12} color="var(--mantine-color-orange-5)" />
+                  <Text size="xs" c="orange.5" fw={500}>Long for CLIP</Text>
+                </Group>
+              </Tooltip>
+            )}
+
+            {captionStats.isLongForT5 && (
+              <Tooltip
+                label="Caption likely exceeds 256 tokens (T5 limit). May be truncated for FLUX / SD3 / Hunyuan training."
+                multiline
+                maw={260}
+                withArrow
+              >
+                <Group gap={3} style={{ cursor: 'default' }}>
+                  <IconAlertTriangle size={12} color="var(--mantine-color-yellow-5)" />
+                  <Text size="xs" c="yellow.5" fw={500}>Long for T5</Text>
+                </Group>
+              </Tooltip>
+            )}
+          </Group>
+        </Stack>
+      )}
+
+      {/* Actions row */}
+      <Group gap="xs">
+        <Button
+          flex={1}
+          leftSection={<IconDeviceFloppy size={15} />}
+          disabled={!isDirty || isSaving || captionLoading}
+          loading={isSaving}
+          onClick={onSave}
+          variant={isDirty ? 'filled' : 'outline'}
+          color={isDirty ? 'orange' : 'gray'}
+          size="sm"
+        >
+          {isDirty ? 'Save' : 'Saved'}
+        </Button>
+
+        {image.hasCaption && (
+          <Tooltip label="Clear caption (delete .txt file)" withArrow>
+            <Button
+              variant="subtle"
+              color="red"
+              size="sm"
+              px="xs"
+              loading={isDeletingCaption}
+              disabled={isSaving || captionLoading}
+              onClick={onDeleteCaption}
+            >
+              <IconTrash size={15} />
+            </Button>
+          </Tooltip>
+        )}
+      </Group>
 
       {/* Mutation error */}
       {isError && (

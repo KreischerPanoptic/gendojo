@@ -13,73 +13,76 @@ import {
   Text,
   ThemeIcon,
   Title,
-} from "@mantine/core";
-import { Split } from "@gfazioli/mantine-split-pane";
+  Tooltip,
+} from '@mantine/core'
+import { Split } from '@gfazioli/mantine-split-pane'
 import {
   IconAlertCircle,
   IconArrowLeft,
   IconPhoto,
   IconPlus,
+  IconTag,
   IconUpload,
-} from "@tabler/icons-react";
-import { useDataset } from "@services/datasets";
-import { useNavigate, useParams } from "@tanstack/react-router";
-import { Route } from "@routes/_authenticated/datasets/edit/$datasetName";
-import { useCallback, useEffect, useState } from "react";
-import { AddFilesDrawer } from "@blocks/AddFilesDrawer";
-import { CaptionEditor } from "@ui/CaptionEditor";
-import { DatasetImageGrid } from "@layouts/DatasetImageGrid";
+} from '@tabler/icons-react'
+import { useDataset } from '@services/datasets'
+import { useNavigate, useParams } from '@tanstack/react-router'
+import { Route } from '@routes/_authenticated/datasets/edit/$datasetName'
+import { useCallback, useEffect, useState } from 'react'
+import { AddFilesDrawer } from '@blocks/Drawers/AddFilesDrawer'
+import { CaptionEditor } from '@ui/CaptionEditor'
+import { DatasetImageGrid } from '@layouts/DatasetImageGrid'
+import { PrependTokenModal } from '@blocks/Modals/PrependTokenModal'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // EditDatasetPage
 // ─────────────────────────────────────────────────────────────────────────────
 
 export default function EditDatasetPage() {
-  const navigate = useNavigate();
-  const { datasetName } = useParams({
-    from: "/_authenticated/datasets/edit/$datasetName",
-  });
-  const { data: dataset, isLoading, isError } = useDataset(datasetName);
-  const { filename: initialFilename } = Route.useSearch();
-  const [selectedIndex, setSelectedIndex] = useState(0);
-  const [addFilesOpen, setAddFilesOpen] = useState(false);
+  const navigate     = useNavigate()
+  const { datasetName } = useParams({ from: '/_authenticated/datasets/edit/$datasetName' })
+  const { data: dataset, isLoading, isError } = useDataset(datasetName)
+  const { filename: initialFilename } = Route.useSearch()
 
-  // When dataset loads, jump to the image that was passed via search param
+  const [selectedIndex, setSelectedIndex] = useState(0)
+  const [addFilesOpen, setAddFilesOpen]   = useState(false)
+  const [prependOpen, setPrependOpen]     = useState(false)
+
+  // Jump to image passed via search param when dataset first loads
   useEffect(() => {
-    if (!dataset || !initialFilename) return;
-    const idx = dataset.images.findIndex(
-      (img) => img.filename === initialFilename,
-    );
-    if (idx !== -1) setSelectedIndex(idx);
+    if (!dataset || !initialFilename) return
+    const idx = dataset.images.findIndex((img) => img.filename === initialFilename)
+    if (idx !== -1) setSelectedIndex(idx)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dataset?.name, initialFilename]); // run once when dataset first arrives
+  }, [dataset?.name, initialFilename])
 
+  // Keep selectedIndex in bounds after deletions
   useEffect(() => {
     if (dataset && selectedIndex >= dataset.images.length) {
-      setSelectedIndex(Math.max(0, dataset.images.length - 1));
+      setSelectedIndex(Math.max(0, dataset.images.length - 1))
     }
-  }, [dataset, selectedIndex]);
+  }, [dataset, selectedIndex])
 
-  const selectedImage = dataset?.images[selectedIndex] ?? null;
+  const selectedImage = dataset?.images[selectedIndex] ?? null
 
+  // Keyboard navigation — skip when textarea is focused
   const handleKeyboard = useCallback(
     (e: KeyboardEvent) => {
-      if (!dataset) return;
-      if (e.target instanceof HTMLTextAreaElement) return;
-      if (e.key === "ArrowRight" || e.key === "ArrowDown")
-        setSelectedIndex((i) => Math.min(i + 1, dataset.images.length - 1));
-      else if (e.key === "ArrowLeft" || e.key === "ArrowUp")
-        setSelectedIndex((i) => Math.max(i - 1, 0));
+      if (!dataset) return
+      if (e.target instanceof HTMLTextAreaElement) return
+      if (e.key === 'ArrowRight' || e.key === 'ArrowDown')
+        setSelectedIndex((i) => Math.min(i + 1, dataset.images.length - 1))
+      else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp')
+        setSelectedIndex((i) => Math.max(i - 1, 0))
     },
     [dataset],
-  );
+  )
 
   useEffect(() => {
-    window.addEventListener("keydown", handleKeyboard);
-    return () => window.removeEventListener("keydown", handleKeyboard);
-  }, [handleKeyboard]);
+    window.addEventListener('keydown', handleKeyboard)
+    return () => window.removeEventListener('keydown', handleKeyboard)
+  }, [handleKeyboard])
 
-  // ── Loading / error states ─────────────────────────────────────────────────
+  // ── Loading ────────────────────────────────────────────────────────────────
 
   if (isLoading) {
     return (
@@ -90,13 +93,13 @@ export default function EditDatasetPage() {
             <Skeleton
               key={i}
               height={0}
-              style={{ aspectRatio: "1", paddingBottom: "100%" }}
+              style={{ aspectRatio: '1', paddingBottom: '100%' }}
               radius="md"
             />
           ))}
         </SimpleGrid>
       </Stack>
-    );
+    )
   }
 
   if (isError || !dataset) {
@@ -105,7 +108,7 @@ export default function EditDatasetPage() {
         <Button
           variant="subtle"
           leftSection={<IconArrowLeft size={15} />}
-          onClick={() => navigate({ to: "/datasets" })}
+          onClick={() => navigate({ to: '/datasets' })}
           px={4}
           size="sm"
         >
@@ -120,10 +123,10 @@ export default function EditDatasetPage() {
           Could not load dataset <strong>{datasetName}</strong>.
         </Alert>
       </Stack>
-    );
+    )
   }
 
-  const captionPercent = Math.round(dataset.captionCoverage * 100);
+  const captionPercent = Math.round(dataset.captionCoverage * 100)
 
   return (
     <>
@@ -133,21 +136,31 @@ export default function EditDatasetPage() {
         onClose={() => setAddFilesOpen(false)}
       />
 
-      <Stack gap={0} h="100%" style={{ overflow: "hidden" }}>
-        {/* Header */}
+      <PrependTokenModal
+        datasetName={datasetName}
+        defaultToken={dataset.meta?.activationToken}
+        opened={prependOpen}
+        onClose={() => setPrependOpen(false)}
+      />
+
+      <Stack gap={0} h="100%" style={{ overflow: 'hidden' }}>
+
+        {/* ── Header ──────────────────────────────────────────────────────── */}
         <Box
           p="lg"
           pb="md"
           style={{
-            borderBottom: "1px solid var(--mantine-color-default-border)",
+            borderBottom: '1px solid var(--mantine-color-default-border)',
             flexShrink: 0,
           }}
         >
           <Group justify="space-between" align="flex-start">
+
+            {/* Left: back + title */}
             <Group gap="md" align="center">
               <ActionIcon
                 variant="subtle"
-                onClick={() => navigate({ to: "/datasets" })}
+                onClick={() => navigate({ to: '/datasets' })}
                 size="sm"
               >
                 <IconArrowLeft size={15} />
@@ -156,20 +169,22 @@ export default function EditDatasetPage() {
                 <Group gap="sm" align="center">
                   <Title order={3}>{dataset.name}</Title>
                   <Badge variant="light" color="gray" size="sm">
-                    {dataset.imageCount} image
-                    {dataset.imageCount !== 1 ? "s" : ""}
+                    {dataset.imageCount} image{dataset.imageCount !== 1 ? 's' : ''}
                   </Badge>
                 </Group>
                 <Text
                   size="xs"
                   c="dimmed"
-                  style={{ fontFamily: "var(--mantine-font-family-monospace)" }}
+                  style={{ fontFamily: 'var(--mantine-font-family-monospace)' }}
                 >
                   {dataset.path}
                 </Text>
               </Stack>
             </Group>
+
+            {/* Right: caption ring + bulk actions + add files */}
             <Group gap="md" align="center">
+              {/* Caption progress ring */}
               <Group gap="xs" align="center">
                 <RingProgress
                   size={40}
@@ -178,19 +193,29 @@ export default function EditDatasetPage() {
                   sections={[
                     {
                       value: captionPercent,
-                      color: captionPercent === 100 ? "teal" : "orange",
+                      color: captionPercent === 100 ? 'teal' : 'orange',
                     },
                   ]}
                 />
                 <Stack gap={0}>
-                  <Text size="xs" fw={600}>
-                    {captionPercent}%
-                  </Text>
-                  <Text size="xs" c="dimmed">
-                    captioned
-                  </Text>
+                  <Text size="xs" fw={600}>{captionPercent}%</Text>
+                  <Text size="xs" c="dimmed">captioned</Text>
                 </Stack>
               </Group>
+
+              {/* Bulk: prepend token */}
+              <Tooltip label="Prepend activation token to all captions" withArrow>
+                <Button
+                  variant="subtle"
+                  size="sm"
+                  leftSection={<IconTag size={14} />}
+                  onClick={() => setPrependOpen(true)}
+                  disabled={dataset.imageCount === 0}
+                >
+                  Prepend token
+                </Button>
+              </Tooltip>
+
               <Button
                 variant="outline"
                 size="sm"
@@ -203,7 +228,7 @@ export default function EditDatasetPage() {
           </Group>
         </Box>
 
-        {/* Body */}
+        {/* ── Body ────────────────────────────────────────────────────────── */}
         {dataset.imageCount === 0 ? (
           <Stack align="center" justify="center" flex={1} gap="md" p="xl">
             <ThemeIcon size={64} variant="light" color="gray" radius="xl">
@@ -211,9 +236,7 @@ export default function EditDatasetPage() {
             </ThemeIcon>
             <Stack gap={4} align="center">
               <Text fw={500}>No images yet</Text>
-              <Text size="sm" c="dimmed">
-                Upload some images to get started
-              </Text>
+              <Text size="sm" c="dimmed">Upload some images to get started</Text>
             </Stack>
             <Button
               leftSection={<IconUpload size={14} />}
@@ -223,7 +246,6 @@ export default function EditDatasetPage() {
             </Button>
           </Stack>
         ) : (
-          // ── Split pane layout ──────────────────────────────────────────────
           <Split
             w="100%"
             style={{ flex: 1, minHeight: 0 }}
@@ -231,14 +253,15 @@ export default function EditDatasetPage() {
             hoverColor="var(--mantine-color-orange-5)"
             size="xs"
           >
-            {/* Left pane — image grid */}
-            <Split.Pane grow style={{ height: "100%", minWidth: 0 }}>
+            {/* Left pane — image grid (editMode = delete/replace overlays) */}
+            <Split.Pane grow style={{ height: '100%', minWidth: 0 }}>
               <DatasetImageGrid
                 images={dataset.images}
                 datasetName={datasetName}
                 onImageClick={setSelectedIndex}
                 selectedIndex={selectedIndex}
-                scrollAreaStyle={{ height: "100%" }}
+                editMode
+                scrollAreaStyle={{ height: '100%' }}
               />
             </Split.Pane>
 
@@ -250,9 +273,9 @@ export default function EditDatasetPage() {
                 initialWidth={320}
                 minWidth={240}
                 maxWidth={520}
-                style={{ height: "100%" }}
+                style={{ height: '100%' }}
               >
-                <ScrollArea style={{ height: "100%" }} p="md">
+                <ScrollArea style={{ height: '100%' }} p="md">
                   <CaptionEditor
                     key={selectedImage.filename}
                     image={selectedImage}
@@ -277,5 +300,5 @@ export default function EditDatasetPage() {
         )}
       </Stack>
     </>
-  );
+  )
 }

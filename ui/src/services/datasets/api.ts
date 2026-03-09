@@ -1,7 +1,13 @@
 import { apiClient } from '@services/client'
 import type {
+  CaptionStats,
+  CaptionTypeDetectionResult,
   DatasetDetail,
+  DatasetMeta,
+  DatasetMetaUpdate,
   DatasetSummary,
+  PrependMode,
+  PrependTokenResult,
   UploadDatasetResponse,
   UploadProgressEvent,
 } from './types'
@@ -22,14 +28,15 @@ const getToken = (): string | null => {
 
 const getBaseURL = (): string =>
   (import.meta.env.DEV
-  ? (import.meta.env.VITE_API_URL as string | undefined) ?? 'http://localhost:3000'
-  : '') + '/api';
+    ? (import.meta.env.VITE_API_URL as string | undefined) ?? 'http://localhost:3000'
+    : '') + '/api'
 
 /**
  * Generic XHR upload with optional progress tracking.
- * Used for both zip and individual file uploads.
+ * Used for zip and individual file uploads where we need progress events.
  */
 function xhrUpload<T>(
+  method: 'POST' | 'PUT',
   url: string,
   formData: FormData,
   onProgress?: (event: UploadProgressEvent) => void,
@@ -38,7 +45,7 @@ function xhrUpload<T>(
     const token = getToken()
     const xhr = new XMLHttpRequest()
 
-    xhr.open('POST', url)
+    xhr.open(method, url)
     if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`)
 
     if (onProgress) {
@@ -55,11 +62,8 @@ function xhrUpload<T>(
 
     xhr.addEventListener('load', () => {
       if (xhr.status >= 200 && xhr.status < 300) {
-        try {
-          resolve(JSON.parse(xhr.responseText) as T)
-        } catch {
-          resolve({} as T)
-        }
+        try { resolve(JSON.parse(xhr.responseText) as T) }
+        catch { resolve({} as T) }
       } else {
         let message = `Upload failed: HTTP ${xhr.status}`
         try {
@@ -82,35 +86,23 @@ function xhrUpload<T>(
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const datasetsApi = {
-  /**
-   * GET /datasets
-   * Returns all dataset directories sorted by updatedAt desc.
-   */
+
+  // ── List / detail ────────────────────────────────────────────────────────
+
   list: async (): Promise<DatasetSummary[]> => {
     const { data } = await apiClient.get<DatasetSummary[]>('/datasets')
     return data
   },
 
-  /**
-   * GET /datasets/:name
-   * Returns full detail including image list.
-   */
   getOne: async (name: string): Promise<DatasetDetail> => {
-    const { data } = await apiClient.get<DatasetDetail>(`/datasets/${encodeURIComponent(name)}`)
+    const { data } = await apiClient.get<DatasetDetail>(
+      `/datasets/${encodeURIComponent(name)}`,
+    )
     return data
   },
 
-  /**
-   * POST /datasets/upload/zip
-   *
-   * Uploads a .zip archive. The backend extracts it into
-   * /workspace/datasets/<name>/ flattening one level of nesting.
-   *
-   * @param name       - Target dataset directory name
-   * @param file       - .zip File object
-   * @param onProgress - Progress callback (0–100%)
-   * @param overwrite  - Merge into existing dataset (default true)
-   */
+  // ── Upload ───────────────────────────────────────────────────────────────
+
   uploadZip: (
     name: string,
     file: File,
@@ -120,25 +112,15 @@ export const datasetsApi = {
     const formData = new FormData()
     formData.append('file', file)
     formData.append('name', name)
-
     const qs = overwrite ? '' : '?overwrite=false'
     return xhrUpload<UploadDatasetResponse>(
+      'POST',
       `${getBaseURL()}/datasets/upload/zip${qs}`,
       formData,
       onProgress,
     )
   },
 
-  /**
-   * POST /datasets/upload/files?name=<name>
-   *
-   * Uploads individual image (.jpg/.jpeg/.png/.webp) or caption (.txt) files.
-   * Max 50 files per request. Creates the dataset directory if it doesn't exist.
-   *
-   * @param name       - Target dataset directory name
-   * @param files      - Array of File objects
-   * @param onProgress - Progress callback (0–100%)
-   */
   uploadFiles: (
     name: string,
     files: File[],
@@ -150,7 +132,6 @@ export const datasetsApi = {
     const uploadOne = (file: File, index: number): Promise<UploadDatasetResponse> => {
       const formData = new FormData()
       formData.append('file', file)
-
       const perFileProgress = onProgress && totalBytes > 0
         ? (e: UploadProgressEvent) => {
             loadedMap.set(index, (e.loaded / e.total) * file.size)
@@ -162,8 +143,8 @@ export const datasetsApi = {
             })
           }
         : undefined
-
       return xhrUpload<UploadDatasetResponse>(
+        'POST',
         `${getBaseURL()}/datasets/upload/file?name=${encodeURIComponent(name)}`,
         formData,
         perFileProgress,
@@ -176,37 +157,44 @@ export const datasetsApi = {
   },
 
   /**
-   * GET /datasets/:name/captions/:image
-   *
-   * Returns { caption: string } if the .txt file exists,
-   * or { caption: null } if the image has no caption yet.
+   * PUT /datasets/:name/images/:filename
+   * Replace an existing image in-place. Caption is preserved.
+   * The uploaded file must share the same extension as the target filename.
    */
+  replaceImage: (
+    datasetName: string,
+    filename: string,
+    file: File,
+    onProgress?: (event: UploadProgressEvent) => void,
+  ): Promise<{ path: string }> => {
+    const formData = new FormData()
+    formData.append('file', file)
+    return xhrUpload<{ path: string }>(
+      'PUT',
+      `${getBaseURL()}/datasets/${encodeURIComponent(datasetName)}/images/${encodeURIComponent(filename)}`,
+      formData,
+      onProgress,
+    )
+  },
+
+  // ── Captions ─────────────────────────────────────────────────────────────
+
   getCaption: async (
     datasetName: string,
     imageName: string,
-  ): Promise<{ caption: string | null }> => {
-    const { data } = await apiClient.get<{ caption: string | null }>(
+  ): Promise<{ caption: string | null; captionStats: CaptionStats | null }> => {
+    const { data } = await apiClient.get<{ caption: string | null; captionStats: CaptionStats | null }>(
       `/datasets/${encodeURIComponent(datasetName)}/captions/${encodeURIComponent(imageName)}`,
     )
     return data
   },
 
-  /**
-   * POST /datasets/:name/captions/:image
-   *
-   * Creates or overwrites the .txt caption file for a given image.
-   * The image must already exist in the dataset.
-   *
-   * @param datasetName  - Dataset directory name
-   * @param imageName    - Image filename (e.g. "cat_001.jpg")
-   * @param caption      - Caption text content
-   */
   upsertCaption: async (
     datasetName: string,
     imageName: string,
     caption: string,
-  ): Promise<{ captionPath: string }> => {
-    const { data } = await apiClient.post<{ captionPath: string }>(
+  ): Promise<{ captionPath: string; captionStats: CaptionStats }> => {
+    const { data } = await apiClient.post<{ captionPath: string; captionStats: CaptionStats }>(
       `/datasets/${encodeURIComponent(datasetName)}/captions/${encodeURIComponent(imageName)}`,
       { caption },
     )
@@ -214,21 +202,98 @@ export const datasetsApi = {
   },
 
   /**
-   * Returns the URL to fetch an image file from a dataset.
-   * Resolves against VITE_API_URL so it can be used in <img src=...>.
-   *
-   * @param datasetName - Dataset directory name
-   * @param filename    - Image filename (e.g. "cat_001.jpg")
+   * DELETE /datasets/:name/captions/:image
+   * Idempotent — returns { deleted: false } when caption was already absent.
    */
-  getImageUrl: (datasetName: string, filename: string): string => {
-    return `${getBaseURL()}/datasets/${encodeURIComponent(datasetName)}/images/${encodeURIComponent(filename)}`
+  deleteCaption: async (
+    datasetName: string,
+    imageName: string,
+  ): Promise<{ deleted: boolean }> => {
+    const { data } = await apiClient.delete<{ deleted: boolean }>(
+      `/datasets/${encodeURIComponent(datasetName)}/captions/${encodeURIComponent(imageName)}`,
+    )
+    return data
   },
 
   /**
-   * DELETE /datasets/:name
-   * Removes the dataset directory and all its contents.
+   * POST /datasets/:name/captions/prepend-token
+   * Bulk-prepend activation token to all existing captions.
    */
+  prependToken: async (
+    datasetName: string,
+    token: string,
+    mode: PrependMode,
+    skipExisting: boolean,
+  ): Promise<PrependTokenResult> => {
+    const { data } = await apiClient.post<PrependTokenResult>(
+      `/datasets/${encodeURIComponent(datasetName)}/captions/prepend-token`,
+      { token, mode, skipExisting },
+    )
+    return data
+  },
+
+  // ── Metadata ─────────────────────────────────────────────────────────────
+
+  getMeta: async (datasetName: string): Promise<DatasetMeta | null> => {
+    const { data } = await apiClient.get<DatasetMeta | null>(
+      `/datasets/${encodeURIComponent(datasetName)}/meta`,
+    )
+    return data
+  },
+
+  updateMeta: async (
+    datasetName: string,
+    update: DatasetMetaUpdate,
+  ): Promise<DatasetMeta> => {
+    const { data } = await apiClient.patch<DatasetMeta>(
+      `/datasets/${encodeURIComponent(datasetName)}/meta`,
+      update,
+    )
+    return data
+  },
+
+  detectCaptionType: async (
+    datasetName: string,
+  ): Promise<CaptionTypeDetectionResult> => {
+    const { data } = await apiClient.post<CaptionTypeDetectionResult>(
+      `/datasets/${encodeURIComponent(datasetName)}/detect-caption-type`,
+    )
+    return data
+  },
+
+  // ── Delete ───────────────────────────────────────────────────────────────
+
+  /**
+   * DELETE /datasets/:name/images/:filename
+   * Removes the image and its companion caption file if present.
+   */
+  deleteImage: async (
+    datasetName: string,
+    filename: string,
+  ): Promise<{ deleted: string[]; captionDeleted: boolean }> => {
+    const { data } = await apiClient.delete<{ deleted: string[]; captionDeleted: boolean }>(
+      `/datasets/${encodeURIComponent(datasetName)}/images/${encodeURIComponent(filename)}`,
+    )
+    return data
+  },
+
   remove: async (name: string): Promise<void> => {
     await apiClient.delete(`/datasets/${encodeURIComponent(name)}`)
   },
+
+  // ── Utility ──────────────────────────────────────────────────────────────
+
+  /**
+   * Returns the image URL for use in <img src=...>.
+   * The endpoint is @SkipAuth so no token is needed in the URL.
+   */
+  getImageUrl: (datasetName: string, filename: string): string =>
+    `${getBaseURL()}/datasets/${encodeURIComponent(datasetName)}/images/${encodeURIComponent(filename)}`,
+
+  /**
+   * Returns the export download URL for the dataset zip.
+   * Open via window.open() or an <a href download>.
+   */
+  getExportUrl: (datasetName: string): string =>
+    `${getBaseURL()}/datasets/${encodeURIComponent(datasetName)}/export`,
 }

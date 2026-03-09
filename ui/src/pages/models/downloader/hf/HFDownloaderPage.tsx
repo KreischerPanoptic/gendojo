@@ -38,6 +38,7 @@ import {
   ARCH_COLOR,
   ARCH_LABEL,
   ROLE_LABEL,
+  useModels,
   type ModelArchitecture,
   type ModelRole,
 } from '@services/models'
@@ -55,7 +56,7 @@ import {
   IconRefresh,
   IconX,
 } from '@tabler/icons-react'
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Preset card
@@ -65,11 +66,17 @@ function PresetCard({
   preset,
   onDownload,
   isStarting,
+  isOnDisk,
 }: {
   preset: ModelPreset
   onDownload: (preset: ModelPreset) => void
   isStarting: boolean
+  isOnDisk: boolean
 }) {
+  // When the file is already on disk the user can explicitly request re-download.
+  const [forceDownload, setForceDownload] = useState(false)
+  // const showDownloadBtn = !isOnDisk || forceDownload
+
   return (
     <Group
       justify="space-between"
@@ -79,13 +86,31 @@ function PresetCard({
       style={{
         borderBottom: '1px solid var(--mantine-color-default-border)',
         '&:last-child': { borderBottom: 'none' },
+        opacity: isOnDisk && !forceDownload ? 0.75 : 1,
+        transition: 'opacity 0.15s',
       }}
     >
+      {/* ── Info ── */}
       <Stack gap={2} style={{ flex: 1, minWidth: 0 }}>
         <Group gap="xs" align="center">
           <Text size="sm" fw={500} style={{ lineHeight: 1.3 }}>
             {preset.name}
           </Text>
+
+          {isOnDisk && (
+            <Tooltip label="File already on disk" withArrow>
+              <Badge
+                size="xs"
+                color="teal"
+                variant="light"
+                leftSection={<IconCheck size={9} />}
+                style={{ cursor: 'default' }}
+              >
+                On disk
+              </Badge>
+            </Tooltip>
+          )}
+
           {preset.requiresHfToken && (
             <Tooltip label="Requires HuggingFace token (gated model)" withArrow>
               <Badge
@@ -100,6 +125,7 @@ function PresetCard({
             </Tooltip>
           )}
         </Group>
+
         <Group gap="xs">
           <Badge size="xs" color="gray" variant="outline" radius="sm">
             {ROLE_LABEL[preset.role as ModelRole] ?? preset.role}
@@ -112,23 +138,63 @@ function PresetCard({
             </Text>
           )}
           {preset.description && (
-            <Text size="xs" c="dimmed" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} maw={360}>
+            <Text
+              size="xs"
+              c="dimmed"
+              style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+              maw={360}
+            >
               {preset.description}
             </Text>
           )}
         </Group>
       </Stack>
 
-      <Button
-        size="xs"
-        variant="light"
-        leftSection={<IconDownload size={13} />}
-        onClick={() => onDownload(preset)}
-        loading={isStarting}
-        style={{ flexShrink: 0 }}
-      >
-        Download
-      </Button>
+      {/* ── Action ── */}
+      <Group gap="xs" style={{ flexShrink: 0 }}>
+        {isOnDisk && !forceDownload ? (
+          <Tooltip label="Download again (overwrite)" withArrow>
+            <Button
+              size="xs"
+              variant="subtle"
+              color="gray"
+              leftSection={<IconRefresh size={12} />}
+              onClick={() => setForceDownload(true)}
+            >
+              Re-download
+            </Button>
+          </Tooltip>
+        ) : (
+          <>
+            {/* Cancel re-download intent */}
+            {isOnDisk && forceDownload && (
+              <Tooltip label="Cancel — keep existing file" withArrow>
+                <ActionIcon
+                  variant="subtle"
+                  color="gray"
+                  size="sm"
+                  onClick={() => setForceDownload(false)}
+                >
+                  <IconX size={13} />
+                </ActionIcon>
+              </Tooltip>
+            )}
+            <Button
+              size="xs"
+              variant={isOnDisk ? 'outline' : 'light'}
+              color={isOnDisk ? 'orange' : undefined}
+              leftSection={<IconDownload size={13} />}
+              onClick={() => {
+                setForceDownload(false)
+                onDownload(preset)
+              }}
+              loading={isStarting}
+            >
+              {isOnDisk ? 'Overwrite' : 'Download'}
+            </Button>
+          </>
+        )}
+      </Group>
     </Group>
   )
 }
@@ -137,7 +203,15 @@ function PresetCard({
 // Arch accordion header
 // ─────────────────────────────────────────────────────────────────────────────
 
-function ArchHeader({ arch, count }: { arch: ModelArchitecture; count: number }) {
+function ArchHeader({
+  arch,
+  count,
+  downloadedCount,
+}: {
+  arch: ModelArchitecture
+  count: number
+  downloadedCount: number
+}) {
   return (
     <Group gap="sm" align="center">
       <Badge size="md" variant="light" color={ARCH_COLOR[arch]} radius="sm" style={{ minWidth: 86 }}>
@@ -146,6 +220,11 @@ function ArchHeader({ arch, count }: { arch: ModelArchitecture; count: number })
       <Text size="sm" c="dimmed">
         {count} {count === 1 ? 'preset' : 'presets'}
       </Text>
+      {downloadedCount > 0 && (
+        <Text size="xs" c="teal.6" style={{ fontVariantNumeric: 'tabular-nums' }}>
+          · {downloadedCount}/{count} on disk
+        </Text>
+      )}
     </Group>
   )
 }
@@ -161,9 +240,12 @@ const ARCH_ORDER: ModelArchitecture[] = [
 function PresetsTab({
   onDownload,
   startingId,
+  onDiskFilenames,
 }: {
   onDownload: (preset: ModelPreset) => void
   startingId: string | null
+  /** Set of filenames currently present on disk (model.filename values) */
+  onDiskFilenames: Set<string>
 }) {
   const { data: presets, isLoading, isError } = useDownloaderPresets()
 
@@ -202,25 +284,36 @@ function PresetsTab({
         content: { padding: 0, paddingBottom: 0 },
       }}
     >
-      {groups.map(({ arch, items }) => (
-        <Accordion.Item key={arch} value={arch}>
-          <Accordion.Control>
-            <ArchHeader arch={arch as ModelArchitecture} count={items.length} />
-          </Accordion.Control>
-          <Accordion.Panel>
-            <Stack gap={0}>
-              {items.map((preset) => (
-                <PresetCard
-                  key={preset.id}
-                  preset={preset}
-                  onDownload={onDownload}
-                  isStarting={startingId === preset.id}
-                />
-              ))}
-            </Stack>
-          </Accordion.Panel>
-        </Accordion.Item>
-      ))}
+      {groups.map(({ arch, items }) => {
+        const downloadedCount = items.filter(
+          (p) => onDiskFilenames.has(p.filename),
+        ).length
+
+        return (
+          <Accordion.Item key={arch} value={arch}>
+            <Accordion.Control>
+              <ArchHeader
+                arch={arch as ModelArchitecture}
+                count={items.length}
+                downloadedCount={downloadedCount}
+              />
+            </Accordion.Control>
+            <Accordion.Panel>
+              <Stack gap={0}>
+                {items.map((preset) => (
+                  <PresetCard
+                    key={preset.id}
+                    preset={preset}
+                    onDownload={onDownload}
+                    isStarting={startingId === preset.id}
+                    isOnDisk={onDiskFilenames.has(preset.filename)}
+                  />
+                ))}
+              </Stack>
+            </Accordion.Panel>
+          </Accordion.Item>
+        )
+      })}
     </Accordion>
   )
 }
@@ -255,11 +348,7 @@ function JobRow({ job, onCancel }: { job: DownloadJob; onCancel: (id: string) =>
             </Badge>
           </Group>
           <Group gap="xs">
-            <Badge
-              size="xs"
-              color={STATUS_COLOR[job.status]}
-              variant="dot"
-            >
+            <Badge size="xs" color={STATUS_COLOR[job.status]} variant="dot">
               {STATUS_LABEL[job.status]}
             </Badge>
             {job.bytesTotal > 0 && (
@@ -273,7 +362,11 @@ function JobRow({ job, onCancel }: { job: DownloadJob; onCancel: (id: string) =>
               </Text>
             )}
             {job.error && (
-              <Text size="xs" c="red" style={{ fontFamily: 'var(--mantine-font-family-monospace)', fontSize: '0.75rem' }}>
+              <Text
+                size="xs"
+                c="red"
+                style={{ fontFamily: 'var(--mantine-font-family-monospace)', fontSize: '0.75rem' }}
+              >
                 {job.error}
               </Text>
             )}
@@ -309,7 +402,7 @@ function JobRow({ job, onCancel }: { job: DownloadJob; onCancel: (id: string) =>
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Jobs tab (active + history combined, split by status)
+// Jobs tab
 // ─────────────────────────────────────────────────────────────────────────────
 
 function JobsTab({ onCancel }: { onCancel: (id: string) => void }) {
@@ -351,8 +444,21 @@ function JobsTab({ onCancel }: { onCancel: (id: string) => void }) {
   return (
     <Stack gap="md">
       {active.length > 0 && (
-        <Stack gap={0} style={{ border: '1px solid var(--mantine-color-default-border)', borderRadius: 8, overflow: 'hidden', background: 'var(--gd-surface)' }}>
-          <Group gap="xs" px="md" py="xs" style={{ borderBottom: '1px solid var(--mantine-color-default-border)' }}>
+        <Stack
+          gap={0}
+          style={{
+            border: '1px solid var(--mantine-color-default-border)',
+            borderRadius: 8,
+            overflow: 'hidden',
+            background: 'var(--gd-surface)',
+          }}
+        >
+          <Group
+            gap="xs"
+            px="md"
+            py="xs"
+            style={{ borderBottom: '1px solid var(--mantine-color-default-border)' }}
+          >
             <IconLoader2 size={14} style={{ color: 'var(--mantine-color-blue-5)' }} />
             <Text size="xs" fw={600} c="dimmed" tt="uppercase" style={{ letterSpacing: '0.06em' }}>
               Active
@@ -368,8 +474,21 @@ function JobsTab({ onCancel }: { onCancel: (id: string) => void }) {
       )}
 
       {history.length > 0 && (
-        <Stack gap={0} style={{ border: '1px solid var(--mantine-color-default-border)', borderRadius: 8, overflow: 'hidden', background: 'var(--gd-surface)' }}>
-          <Group gap="xs" px="md" py="xs" style={{ borderBottom: '1px solid var(--mantine-color-default-border)' }}>
+        <Stack
+          gap={0}
+          style={{
+            border: '1px solid var(--mantine-color-default-border)',
+            borderRadius: 8,
+            overflow: 'hidden',
+            background: 'var(--gd-surface)',
+          }}
+        >
+          <Group
+            gap="xs"
+            px="md"
+            py="xs"
+            style={{ borderBottom: '1px solid var(--mantine-color-default-border)' }}
+          >
             <IconHistory size={14} style={{ color: 'var(--mantine-color-dimmed)' }} />
             <Text size="xs" fw={600} c="dimmed" tt="uppercase" style={{ letterSpacing: '0.06em' }}>
               History
@@ -501,7 +620,7 @@ function CustomUrlModal({
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// DownloaderPage
+// HFDownloaderPage
 // ─────────────────────────────────────────────────────────────────────────────
 
 export default function HFDownloaderPage() {
@@ -510,8 +629,15 @@ export default function HFDownloaderPage() {
   const [customModalOpen, { open: openCustom, close: closeCustom }] = useDisclosure(false)
 
   const { data: jobs = [] } = useDownloadJobs()
+  const { data: models = [] } = useModels()
   const startMutation = useStartDownload()
   const cancelMutation = useCancelDownload()
+
+  /** Set of all filenames currently on disk — used to mark presets as downloaded. */
+  const onDiskFilenames = useMemo(
+    () => new Set(models.map((m) => m.filename)),
+    [models],
+  )
 
   const activeCount = jobs.filter(
     (j) => j.status === 'pending' || j.status === 'downloading',
@@ -653,7 +779,11 @@ export default function HFDownloaderPage() {
 
           <Tabs.Panel value="presets">
             <ScrollArea style={{ height: '100%' }} p="lg">
-              <PresetsTab onDownload={(p) => void handlePresetDownload(p)} startingId={startingId} />
+              <PresetsTab
+                onDownload={(p) => void handlePresetDownload(p)}
+                startingId={startingId}
+                onDiskFilenames={onDiskFilenames}
+              />
             </ScrollArea>
           </Tabs.Panel>
 

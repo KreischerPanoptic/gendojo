@@ -1,18 +1,40 @@
 import {
   Accordion,
+  ActionIcon,
   Badge,
   Box,
+  Button,
   Group,
+  List,
+  Loader,
+  Modal,
   Skeleton,
   Stack,
   Text,
+  Tooltip,
 } from '@mantine/core'
-import { IconBox } from '@tabler/icons-react'
+import { useDisclosure } from '@mantine/hooks'
+import {
+  IconAlertTriangle,
+  IconBox,
+  IconCircleCheck,
+  IconCircleX,
+  IconHelp,
+  IconShieldCheck,
+  IconTrash,
+} from '@tabler/icons-react'
 import type { DataTableColumn, DataTableSortStatus } from 'mantine-datatable'
 import { DataTable } from 'mantine-datatable'
 import { useMemo, useState } from 'react'
 import {
+  useArchReadiness,
+  useCheckFileIntegrity,
+  useDeleteArch,
+  useDeleteModel,
   useModels,
+  type DeleteArchPreview,
+  type FileIntegrityResult,
+  type IntegrityStatus,
   type ModelArchitecture,
   type ModelFile,
   type ModelRole,
@@ -22,80 +44,320 @@ import {
   ROLE_LABEL,
   formatSize,
 } from '@services/models'
+import { modelsApi } from '@services/models/api'
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Inner table columns
+// Integrity badge
 // ─────────────────────────────────────────────────────────────────────────────
 
-const innerColumns: DataTableColumn<ModelFile>[] = [
-  {
-    accessor: 'name',
-    title: 'Name',
-    sortable: true,
-    render: ({ name }) => (
-      <Text size="sm" fw={500} style={{ fontFamily: 'var(--font-mono)', fontSize: '0.8rem' }}>
-        {name}
-      </Text>
-    ),
-  },
-  {
-    accessor: 'role',
-    title: 'Role',
-    sortable: true,
-    render: ({ role }) => (
-      <Text size="xs" c={role !== 'unknown' ? undefined : 'dimmed'}>
-        {role !== 'unknown' ? ROLE_LABEL[role as ModelRole] : '—'}
-      </Text>
-    ),
-  },
-  {
-    accessor: 'type',
-    title: 'Type',
-    sortable: true,
-    render: ({ type }) => (
-      <Text size="xs" c="dimmed" tt="capitalize">
-        {type !== 'unknown' ? type.replace('_', ' ') : '—'}
-      </Text>
-    ),
-  },
-  {
-    accessor: 'sizeBytes',
-    title: 'Size',
-    sortable: true,
-    textAlign: 'right',
-    width: 96,
-    render: ({ sizeBytes }) => (
-      <Text size="xs" c="dimmed" style={{ fontFamily: 'var(--font-mono)', fontSize: '0.78rem' }}>
-        {formatSize(sizeBytes)}
-      </Text>
-    ),
-  },
-  {
-    accessor: 'id',
-    title: 'Path',
-    sortable: false,
-    render: ({ id }) => (
-      <Text size="xs" c="dimmed" style={{ fontFamily: 'var(--font-mono)', fontSize: '0.75rem' }}>
-        {id}
-      </Text>
-    ),
-  },
-  {
-    accessor: 'modifiedAt',
-    title: 'Modified',
-    sortable: true,
-    width: 130,
-    render: ({ modifiedAt }) => (
-      <Text size="xs" c="dimmed">
-        {new Date(modifiedAt).toLocaleDateString(undefined, {
-          year: 'numeric',
-          month: 'short',
-          day: 'numeric',
-        })}
-      </Text>
-    ),
-  },
-]
+const INTEGRITY_COLOR: Record<IntegrityStatus, string> = {
+  ok:        'teal',
+  corrupted: 'red',
+  unknown:   'gray',
+}
+
+const INTEGRITY_LABEL: Record<IntegrityStatus, string> = {
+  ok:        'OK',
+  corrupted: 'Corrupted',
+  unknown:   'No hash',
+}
+
+function IntegrityBadge({ result }: { result: FileIntegrityResult }) {
+  const icon =
+    result.status === 'ok'        ? <IconCircleCheck size={12} /> :
+    result.status === 'corrupted' ? <IconCircleX size={12} />     :
+                                    <IconHelp size={12} />
+
+  return (
+    <Tooltip
+      label={
+        result.status === 'ok'
+          ? `SHA-256 verified`
+          : result.status === 'corrupted'
+          ? `Expected: ${result.expectedSha256}\nGot: ${result.computedSha256}`
+          : `No hash registered — computed: ${result.computedSha256}`
+      }
+      multiline
+      w={340}
+      withArrow
+    >
+      <Badge
+        size="xs"
+        variant="light"
+        color={INTEGRITY_COLOR[result.status]}
+        leftSection={icon}
+      >
+        {INTEGRITY_LABEL[result.status]}
+      </Badge>
+    </Tooltip>
+  )
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Delete single file — confirmation modal
+// ─────────────────────────────────────────────────────────────────────────────
+
+function DeleteFileButton({ model }: { model: ModelFile }) {
+  const [opened, { open, close }] = useDisclosure(false)
+  const { mutate: deleteModel, isPending } = useDeleteModel()
+
+  const confirm = () => {
+    deleteModel(model.id, { onSuccess: close })
+  }
+
+  return (
+    <>
+      <Tooltip label="Delete file" withArrow>
+        <ActionIcon
+          size="sm"
+          variant="subtle"
+          color="red"
+          onClick={open}
+          aria-label={`Delete ${model.filename}`}
+        >
+          <IconTrash size={13} />
+        </ActionIcon>
+      </Tooltip>
+
+      <Modal
+        opened={opened}
+        onClose={close}
+        title="Delete model file"
+        size="sm"
+        centered
+      >
+        <Stack gap="md">
+          <Text size="sm">
+            Delete{' '}
+            <Text component="span" fw={600} style={{ fontFamily: 'var(--font-mono)' }}>
+              {model.filename}
+            </Text>
+            {'  '}
+            <Text component="span" size="xs" c="dimmed">
+              ({formatSize(model.sizeBytes)})
+            </Text>
+          </Text>
+
+          <Text size="xs" c="dimmed">
+            This cannot be undone. If this file is shared with another architecture,
+            that architecture will lose readiness.
+          </Text>
+
+          <Group justify="flex-end" gap="sm">
+            <Button variant="default" size="xs" onClick={close}>
+              Cancel
+            </Button>
+            <Button
+              color="red"
+              size="xs"
+              loading={isPending}
+              onClick={confirm}
+            >
+              Delete
+            </Button>
+          </Group>
+        </Stack>
+      </Modal>
+    </>
+  )
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Check integrity button — inline result
+// ─────────────────────────────────────────────────────────────────────────────
+
+function IntegrityCell({
+  model,
+  result,
+  onResult,
+}: {
+  model: ModelFile
+  result: FileIntegrityResult | undefined
+  onResult: (r: FileIntegrityResult) => void
+}) {
+  const { mutate: check, isPending } = useCheckFileIntegrity()
+
+  if (result) return <IntegrityBadge result={result} />
+
+  return (
+    <Tooltip
+      label={`Compute SHA-256 (may take minutes for large files)`}
+      withArrow
+    >
+      <ActionIcon
+        size="sm"
+        variant="subtle"
+        color="blue"
+        loading={isPending}
+        onClick={() => check(model.id, { onSuccess: onResult })}
+        aria-label="Check integrity"
+      >
+        {!isPending && <IconShieldCheck size={13} />}
+      </ActionIcon>
+    </Tooltip>
+  )
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Readiness badge in accordion header
+// ─────────────────────────────────────────────────────────────────────────────
+
+function ReadinessBadge({ arch }: { arch: ModelArchitecture }) {
+  const { data, isLoading } = useArchReadiness(arch)
+
+  if (isLoading) return <Loader size={12} />
+
+  if (!data) return null
+
+  if (data.ready) {
+    return (
+      <Tooltip label="All required files present" withArrow>
+        <Badge size="xs" variant="dot" color="teal" style={{ cursor: 'default' }}>
+          Ready
+        </Badge>
+      </Tooltip>
+    )
+  }
+
+  const missing = data.missingRoles.map((r) => ROLE_LABEL[r as ModelRole] ?? r).join(', ')
+
+  return (
+    <Tooltip label={`Missing: ${missing}`} withArrow>
+      <Badge size="xs" variant="dot" color="orange" style={{ cursor: 'default' }}>
+        Incomplete
+      </Badge>
+    </Tooltip>
+  )
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Delete arch button + preview modal
+// ─────────────────────────────────────────────────────────────────────────────
+
+function DeleteArchButton({ arch }: { arch: ModelArchitecture }) {
+  const [opened, { open, close }] = useDisclosure(false)
+  const [preview, setPreview] = useState<DeleteArchPreview | null>(null)
+  const [loadingPreview, setLoadingPreview] = useState(false)
+  const { mutate: deleteArch, isPending } = useDeleteArch()
+
+  const openWithPreview = async (e: React.MouseEvent) => {
+    // Stop accordion from toggling
+    e.stopPropagation()
+
+    setLoadingPreview(true)
+    try {
+      const p = await modelsApi.previewDeleteArch(arch)
+      setPreview(p)
+      open()
+    } finally {
+      setLoadingPreview(false)
+    }
+  }
+
+  const confirm = () => {
+    deleteArch(arch, { onSuccess: close })
+  }
+
+  return (
+    <>
+      <Tooltip label={`Delete all ${ARCH_LABEL[arch]} files`} withArrow>
+        <ActionIcon
+          size="sm"
+          variant="subtle"
+          color="red"
+          loading={loadingPreview}
+          onClick={openWithPreview}
+          aria-label={`Delete ${arch}`}
+        >
+          <IconTrash size={13} />
+        </ActionIcon>
+      </Tooltip>
+
+      <Modal
+        opened={opened}
+        onClose={close}
+        title={
+          <Group gap="xs">
+            <IconAlertTriangle size={16} color="var(--mantine-color-red-5)" />
+            <Text fw={600}>Delete {ARCH_LABEL[arch]} models</Text>
+          </Group>
+        }
+        size="md"
+        centered
+      >
+        {preview && (
+          <Stack gap="md">
+            <Text size="sm">
+              This will permanently delete{' '}
+              <Text component="span" fw={600}>{preview.toDelete.length} file{preview.toDelete.length !== 1 ? 's' : ''}</Text>
+              {' '}({formatSize(preview.totalSizeMb * 1024 * 1024)}) from disk.
+            </Text>
+
+            {preview.sharedWarnings.length > 0 && (
+              <Box
+                p="sm"
+                style={{
+                  borderRadius: 6,
+                  background: 'var(--mantine-color-orange-light)',
+                  border: '1px solid var(--mantine-color-orange-light-hover)',
+                }}
+              >
+                <Group gap="xs" mb={6}>
+                  <IconAlertTriangle size={14} color="var(--mantine-color-orange-6)" />
+                  <Text size="xs" fw={600} c="orange">
+                    Shared files warning
+                  </Text>
+                </Group>
+                <Text size="xs" c="dimmed" mb={6}>
+                  The following files are also used by other architectures and will be deleted:
+                </Text>
+                <List size="xs" spacing={2}>
+                  {preview.sharedWarnings.map((w) => (
+                    <List.Item key={w.file.id}>
+                      <Text component="span" style={{ fontFamily: 'var(--font-mono)', fontSize: '0.72rem' }}>
+                        {w.file.filename}
+                      </Text>
+                      <Text component="span" size="xs" c="dimmed">
+                        {' '}— also used by: {w.sharedWithArches.map((a) => ARCH_LABEL[a]).join(', ')}
+                      </Text>
+                    </List.Item>
+                  ))}
+                </List>
+              </Box>
+            )}
+
+            <List size="xs" spacing={2} c="dimmed">
+              {preview.toDelete.slice(0, 8).map((f) => (
+                <List.Item key={f.id}>
+                  <Text component="span" style={{ fontFamily: 'var(--font-mono)', fontSize: '0.72rem' }}>
+                    {f.relativePath}
+                  </Text>
+                  <Text component="span" size="xs" c="dimmed">
+                    {' '}({formatSize(f.sizeBytes)})
+                  </Text>
+                </List.Item>
+              ))}
+              {preview.toDelete.length > 8 && (
+                <Text size="xs" c="dimmed">
+                  …and {preview.toDelete.length - 8} more
+                </Text>
+              )}
+            </List>
+
+            <Group justify="flex-end" gap="sm">
+              <Button variant="default" size="xs" onClick={close}>
+                Cancel
+              </Button>
+              <Button color="red" size="xs" loading={isPending} onClick={confirm}>
+                Delete {preview.toDelete.length} files
+              </Button>
+            </Group>
+          </Stack>
+        )}
+      </Modal>
+    </>
+  )
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Accordion header
@@ -111,22 +373,31 @@ function ArchHeader({
   totalBytes: number
 }) {
   return (
-    <Group gap="sm" align="center">
-      <Badge
-        size="md"
-        variant="light"
-        color={ARCH_COLOR[arch]}
-        radius="sm"
-        style={{ minWidth: 86, textAlign: 'center' }}
-      >
-        {ARCH_LABEL[arch]}
-      </Badge>
-      <Text size="sm" c="dimmed">
-        {count} {count === 1 ? 'model' : 'models'}
-      </Text>
-      <Text size="xs" c="dimmed" style={{ fontFamily: 'var(--font-mono)' }}>
-        · {formatSize(totalBytes)}
-      </Text>
+    <Group gap="sm" align="center" justify="space-between" style={{ flex: 1 }}>
+      <Group gap="sm" align="center">
+        <Badge
+          size="md"
+          variant="light"
+          color={ARCH_COLOR[arch]}
+          radius="sm"
+          style={{ minWidth: 86, textAlign: 'center' }}
+        >
+          {ARCH_LABEL[arch]}
+        </Badge>
+        <Text size="sm" c="dimmed">
+          {count} {count === 1 ? 'model' : 'models'}
+        </Text>
+        <Text size="xs" c="dimmed" style={{ fontFamily: 'var(--font-mono)' }}>
+          · {formatSize(totalBytes)}
+        </Text>
+        {arch !== 'unknown' && <ReadinessBadge arch={arch} />}
+      </Group>
+
+      {arch !== 'unknown' && (
+        <Box onClick={(e) => e.stopPropagation()}>
+          <DeleteArchButton arch={arch} />
+        </Box>
+      )}
     </Group>
   )
 }
@@ -140,6 +411,15 @@ function ArchPanel({ models }: { models: ModelFile[] }) {
     columnAccessor: 'name',
     direction: 'asc',
   })
+
+  // Map of fileId → integrity result, persists for the session
+  const [integrityResults, setIntegrityResults] = useState<
+    Record<string, FileIntegrityResult>
+  >({})
+
+  const handleIntegrityResult = (r: FileIntegrityResult) => {
+    setIntegrityResults((prev) => ({ ...prev, [r.id]: r }))
+  }
 
   const sorted = useMemo(() => {
     const col = sortStatus.columnAccessor as keyof ModelFile
@@ -155,6 +435,92 @@ function ArchPanel({ models }: { models: ModelFile[] }) {
     })
   }, [models, sortStatus])
 
+  const columns: DataTableColumn<ModelFile>[] = [
+    {
+      accessor: 'name',
+      title: 'Name',
+      sortable: true,
+      render: ({ name }) => (
+        <Text size="sm" fw={500} style={{ fontFamily: 'var(--font-mono)', fontSize: '0.8rem' }}>
+          {name}
+        </Text>
+      ),
+    },
+    {
+      accessor: 'role',
+      title: 'Role',
+      sortable: true,
+      render: ({ role }) => (
+        <Text size="xs" c={role !== 'unknown' ? undefined : 'dimmed'}>
+          {role !== 'unknown' ? ROLE_LABEL[role as ModelRole] : '—'}
+        </Text>
+      ),
+    },
+    {
+      accessor: 'type',
+      title: 'Type',
+      sortable: true,
+      render: ({ type }) => (
+        <Text size="xs" c="dimmed" tt="capitalize">
+          {type !== 'unknown' ? type.replace('_', ' ') : '—'}
+        </Text>
+      ),
+    },
+    {
+      accessor: 'sizeBytes',
+      title: 'Size',
+      sortable: true,
+      textAlign: 'right',
+      width: 96,
+      render: ({ sizeBytes }) => (
+        <Text size="xs" c="dimmed" style={{ fontFamily: 'var(--font-mono)', fontSize: '0.78rem' }}>
+          {formatSize(sizeBytes)}
+        </Text>
+      ),
+    },
+    {
+      accessor: 'id',
+      title: 'Path',
+      sortable: false,
+      render: ({ id }) => (
+        <Text size="xs" c="dimmed" style={{ fontFamily: 'var(--font-mono)', fontSize: '0.75rem' }}>
+          {id}
+        </Text>
+      ),
+    },
+    {
+      accessor: 'modifiedAt',
+      title: 'Modified',
+      sortable: true,
+      width: 110,
+      render: ({ modifiedAt }) => (
+        <Text size="xs" c="dimmed">
+          {new Date(modifiedAt).toLocaleDateString(undefined, {
+            year: 'numeric',
+            month: 'short',
+            day: 'numeric',
+          })}
+        </Text>
+      ),
+    },
+    {
+      accessor: 'actions',
+      title: '',
+      sortable: false,
+      width: 64,
+      render: (model) => (
+        <Group gap={4} justify="flex-end" wrap="nowrap">
+          <IntegrityCell
+            model={model}
+            result={integrityResults[model.id]}
+            onResult={handleIntegrityResult}
+          />
+          <DeleteFileButton model={model} />
+        </Group>
+      ),
+    },
+  ]
+
   return (
     <DataTable<ModelFile>
       withRowBorders
@@ -162,13 +528,11 @@ function ArchPanel({ models }: { models: ModelFile[] }) {
       highlightOnHover
       borderRadius="md"
       records={sorted}
-      columns={innerColumns}
+      columns={columns}
       sortStatus={sortStatus}
       onSortStatusChange={setSortStatus}
       noRecordsText="No models"
-      styles={{
-        header: { background: 'transparent' },
-      }}
+      styles={{ header: { background: 'transparent' } }}
     />
   )
 }
@@ -260,7 +624,7 @@ export default function ModelsTable({ typeFilter }: ModelsTableProps) {
           <Accordion.Control>
             <ArchHeader arch={arch} count={models.length} totalBytes={totalBytes} />
           </Accordion.Control>
-          <Accordion.Panel className='px-2 py-1'>
+          <Accordion.Panel className="px-2 py-1">
             <ArchPanel models={models} />
           </Accordion.Panel>
         </Accordion.Item>

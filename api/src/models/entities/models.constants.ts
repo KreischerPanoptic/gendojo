@@ -90,12 +90,48 @@ export const ARCH_ROLES: Record<ModelArchitecture, ModelRole[]> = {
   sd2:     ['checkpoint', 'unet', 'vae', 'lora', 'text_encoder'],
   sdxl:    ['checkpoint', 'unet', 'vae', 'lora', 'clip_l', 'clip_g', 'text_encoder'],
   flux:    ['dit', 'ae', 'clip_l', 't5xxl', 'lora'],
-  chroma:  ['dit', 'ae', 't5xxl', 'lora'],          // no CLIP-L, guidance=0
+  chroma:  ['dit', 'ae', 't5xxl', 'lora'],
   sd3:     ['dit', 'vae', 'clip_l', 'clip_g', 't5xxl', 'lora'],
   anima:   ['dit', 'vae', 'qwen3', 'llm_adapter', 'lora'],
   lumina:  ['dit', 'ae', 'gemma2', 'lora'],
   hunyuan: ['dit', 'vae', 'qwen2_5_vl', 'byt5', 'lora'],
   unknown: [],
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Minimum required roles for an architecture to be "ready" for training.
+//
+// Structure: outer array = OR (any one variant satisfies readiness)
+//            inner array = AND (all roles in the variant must be present)
+//
+// SD1/SD2/SDXL support two variants:
+//   - a single merged checkpoint file
+//   - separate component files (unet/vae/text encoders)
+//
+// Newer architectures (FLUX, SD3, etc.) only have the split-file variant.
+// LoRA adapters are excluded — they are optional training targets, not deps.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const ARCH_REQUIRED_ROLES: Record<ModelArchitecture, ModelRole[][]> = {
+  // SD1/SD2: merged checkpoint OR separate unet + vae + text encoder
+  sd1:     [['checkpoint'], ['unet', 'vae', 'text_encoder']],
+  sd2:     [['checkpoint'], ['unet', 'vae', 'text_encoder']],
+  // SDXL: merged checkpoint OR separate unet + vae + both CLIPs
+  sdxl:    [['checkpoint'], ['unet', 'vae', 'clip_l', 'clip_g']],
+  // FLUX: all 4 components are mandatory — no merged option
+  flux:    [['dit', 'ae', 'clip_l', 't5xxl']],
+  // Chroma: FLUX variant — no CLIP-L, guidance_scale=0
+  chroma:  [['dit', 'ae', 't5xxl']],
+  // SD3/SD3.5: DiT + VAE + all 3 text encoders
+  // Note: single-file checkpoints also exist but aren't split-scanned here
+  sd3:     [['dit', 'vae', 'clip_l', 'clip_g', 't5xxl']],
+  // Anima: DiT + VAE + Qwen3 text encoder (llm_adapter is optional)
+  anima:   [['dit', 'vae', 'qwen3']],
+  // Lumina Image 2.0: DiT + AE + Gemma2
+  lumina:  [['dit', 'ae', 'gemma2']],
+  // HunyuanImage 2.1: DiT + VAE + Qwen2.5-VL + byT5
+  hunyuan: [['dit', 'vae', 'qwen2_5_vl', 'byt5']],
+  unknown: [[]],
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -109,8 +145,9 @@ export const ARCH_ROLES: Record<ModelArchitecture, ModelRole[]> = {
 //   <arch>/vae/          — VAE / AE weights (some archs call it ae but same dir)
 //   <arch>/text_encoders/— shared TE directory per arch
 //   <arch>/lora/         — LoRA adapters
-//   shared/              — files genuinely reusable across architectures
-//                          (e.g. a CLIP-L shared between FLUX and SD3)
+//
+// Chroma intentionally maps its ae/t5xxl to flux/ subdirs — these files are
+// physically shared. This is reflected in the SharedFileWarning logic.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export type ArchRoleDirMap = Partial<Record<ModelRole, string>>;
@@ -147,7 +184,8 @@ export const ARCH_ROLE_DIR: Record<ModelArchitecture, ArchRoleDirMap> = {
     lora:  'flux/lora',
   },
   chroma: {
-    // Chroma is a FLUX variant — lives in the same root dir
+    // Chroma is a FLUX variant — lives in the same root dir.
+    // ae and t5xxl are physically shared files with FLUX.
     dit:   'flux',
     ae:    'flux/ae',
     t5xxl: 'flux/text_encoders',

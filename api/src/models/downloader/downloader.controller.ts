@@ -10,7 +10,7 @@ import {
 import { DownloaderService } from './downloader.service';
 import { StartDownloadDto } from './entities/downloader.types';
 
-@Controller('downloader')
+@Controller("downloader")
 export class DownloaderController {
   constructor(private readonly downloaderService: DownloaderService) {}
 
@@ -34,7 +34,7 @@ export class DownloaderController {
    * GET /downloader
    * Returns all download jobs (active + history), newest first.
    */
-  @Get()
+  @Get('')
   list() {
     return this.downloaderService.listJobs();
   }
@@ -57,7 +57,7 @@ export class DownloaderController {
    * Returns the job object immediately; download runs in background.
    * Poll GET /downloader/:id for progress.
    */
-  @Post()
+  @Post('')
   start(@Body() dto: StartDownloadDto) {
     return this.downloaderService.start(dto);
   }

@@ -25,7 +25,7 @@ export class AuthGuard implements CanActivate {
   }
 
   canActivate(context: ExecutionContext): boolean {
-    // Проверяем @SkipAuth() на хендлере или классе
+    // Checking @SkipAuth() on handler or class
     const isPublic = this.reflector.getAllAndOverride<boolean>(IS_PUBLIC_KEY, [
       context.getHandler(),
       context.getClass(),
@@ -33,7 +33,7 @@ export class AuthGuard implements CanActivate {
 
     if (isPublic) return true;
 
-    // Dev режим — AUTH_USERNAME/PASSWORD не заданы
+    // Dev mode — AUTH_USERNAME/AUTH_PASSWORD not set
     if (!this.authEnabled) return true;
 
     const request = context.switchToHttp().getRequest<Request>();
@@ -44,7 +44,6 @@ export class AuthGuard implements CanActivate {
     }
 
     try {
-      // Декодированный payload кладём в request для возможного использования в хендлерах
       request['user'] = this.jwtService.verify(token);
     } catch {
       throw new UnauthorizedException('Invalid or expired token');

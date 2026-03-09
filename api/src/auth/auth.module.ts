@@ -6,9 +6,9 @@ import { AuthService } from './auth.service';
 import { AuthController } from './auth.controller';
 import * as ms from 'ms';
 /**
- * AUTH_SECRET — секрет для подписи JWT.
- * Если не задан — используем fallback (только для dev!).
- * На RunPod обязательно задавать через template variables.
+ * AUTH_SECRET — secret for JWT signing.
+ * If not set — fallback is used (only for dev!).
+ * On RunPod must set through template variables.
  */
 const JWT_SECRET = process.env.AUTH_SECRET?.trim() || 'dev-secret-change-me-in-production';
 const JWT_EXPIRES = process.env.AUTH_TOKEN_EXPIRES || '30d';

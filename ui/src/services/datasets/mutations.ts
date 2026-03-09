@@ -1,11 +1,11 @@
 import { useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { datasetsApi } from './api'
-import type { UploadProgressEvent } from './types'
+import type { DatasetMetaUpdate, PrependMode, UploadProgressEvent } from './types'
 import { datasetsQueryKeys } from './keys'
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Shared upload state type
+// Shared upload state
 // ─────────────────────────────────────────────────────────────────────────────
 
 export interface UploadDatasetState {
@@ -14,7 +14,7 @@ export interface UploadDatasetState {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Upload ZIP archive
+// Upload ZIP
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const useUploadDatasetZip = () => {
@@ -27,20 +27,16 @@ export const useUploadDatasetZip = () => {
   const mutation = useMutation({
     mutationFn: ({ name, file }: { name: string; file: File }) => {
       setUploadState({ progress: 0, isUploading: true })
-
-      return datasetsApi.uploadZip(name, file, (event: UploadProgressEvent) => {
-        setUploadState({ progress: event.percent, isUploading: true })
+      return datasetsApi.uploadZip(name, file, (e: UploadProgressEvent) => {
+        setUploadState({ progress: e.percent, isUploading: true })
       })
     },
-
     onSuccess: () => {
       setUploadState({ progress: 100, isUploading: false })
       void queryClient.invalidateQueries({ queryKey: datasetsQueryKeys.all })
     },
-
-    onError: (error) => {
+    onError: () => {
       setUploadState({ progress: 0, isUploading: false })
-      console.error('[Datasets] ZIP upload failed:', error)
     },
   })
 
@@ -65,20 +61,16 @@ export const useUploadDatasetFiles = () => {
   const mutation = useMutation({
     mutationFn: ({ name, files }: { name: string; files: File[] }) => {
       setUploadState({ progress: 0, isUploading: true })
-
-      return datasetsApi.uploadFiles(name, files, (event: UploadProgressEvent) => {
-        setUploadState({ progress: event.percent, isUploading: true })
+      return datasetsApi.uploadFiles(name, files, (e: UploadProgressEvent) => {
+        setUploadState({ progress: e.percent, isUploading: true })
       })
     },
-
     onSuccess: () => {
       setUploadState({ progress: 100, isUploading: false })
       void queryClient.invalidateQueries({ queryKey: datasetsQueryKeys.all })
     },
-
-    onError: (error) => {
+    onError: () => {
       setUploadState({ progress: 0, isUploading: false })
-      console.error('[Datasets] Files upload failed:', error)
     },
   })
 
@@ -90,7 +82,23 @@ export const useUploadDatasetFiles = () => {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Upsert caption for a single image
+// Replace image
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const useReplaceImage = (datasetName: string) => {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: ({ filename, file }: { filename: string; file: File }) =>
+      datasetsApi.replaceImage(datasetName, filename, file),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: datasetsQueryKeys.detail(datasetName) })
+    },
+  })
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Upsert caption
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const useUpsertCaption = (datasetName: string) => {
@@ -99,18 +107,111 @@ export const useUpsertCaption = (datasetName: string) => {
   return useMutation({
     mutationFn: ({ imageName, caption }: { imageName: string; caption: string }) =>
       datasetsApi.upsertCaption(datasetName, imageName, caption),
-
     onSuccess: (_data, { imageName }) => {
-      // Invalidate the caption cache for this specific image
       void queryClient.invalidateQueries({
         queryKey: datasetsQueryKeys.caption(datasetName, imageName),
       })
-      // Refresh dataset detail so hasCaption flags update
       void queryClient.invalidateQueries({ queryKey: datasetsQueryKeys.detail(datasetName) })
     },
+  })
+}
 
-    onError: (error) => {
-      console.error('[Datasets] Caption save failed:', error)
+// ─────────────────────────────────────────────────────────────────────────────
+// Delete caption
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const useDeleteCaption = (datasetName: string) => {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: (imageName: string) =>
+      datasetsApi.deleteCaption(datasetName, imageName),
+    onSuccess: (_data, imageName) => {
+      // Remove cached caption so the next read returns null
+      queryClient.removeQueries({
+        queryKey: datasetsQueryKeys.caption(datasetName, imageName),
+      })
+      void queryClient.invalidateQueries({ queryKey: datasetsQueryKeys.detail(datasetName) })
+    },
+  })
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Delete image
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const useDeleteImage = (datasetName: string) => {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: (filename: string) =>
+      datasetsApi.deleteImage(datasetName, filename),
+    onSuccess: (_data, filename) => {
+      queryClient.removeQueries({
+        queryKey: datasetsQueryKeys.caption(datasetName, filename),
+      })
+      void queryClient.invalidateQueries({ queryKey: datasetsQueryKeys.detail(datasetName) })
+    },
+  })
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Prepend token (bulk)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const usePrependToken = (datasetName: string) => {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: ({
+      token,
+      mode,
+      skipExisting,
+    }: {
+      token: string
+      mode: PrependMode
+      skipExisting: boolean
+    }) => datasetsApi.prependToken(datasetName, token, mode, skipExisting),
+    onSuccess: () => {
+      // All captions changed — invalidate detail and all caption caches for this dataset
+      void queryClient.invalidateQueries({ queryKey: datasetsQueryKeys.detail(datasetName) })
+      void queryClient.invalidateQueries({ queryKey: ['datasets', datasetName, 'captions'] })
+    },
+  })
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Update metadata
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const useUpdateMeta = (datasetName: string) => {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: (update: DatasetMetaUpdate) =>
+      datasetsApi.updateMeta(datasetName, update),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: datasetsQueryKeys.meta(datasetName) })
+      // Also refresh list/detail so meta shows updated in summaries
+      void queryClient.invalidateQueries({ queryKey: datasetsQueryKeys.detail(datasetName) })
+      void queryClient.invalidateQueries({ queryKey: datasetsQueryKeys.all })
+    },
+  })
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Detect caption type
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const useDetectCaptionType = (datasetName: string) => {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: () => datasetsApi.detectCaptionType(datasetName),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: datasetsQueryKeys.meta(datasetName) })
+      void queryClient.invalidateQueries({ queryKey: datasetsQueryKeys.detail(datasetName) })
+      void queryClient.invalidateQueries({ queryKey: datasetsQueryKeys.all })
     },
   })
 }
@@ -124,14 +225,9 @@ export const useRemoveDataset = () => {
 
   return useMutation({
     mutationFn: (name: string) => datasetsApi.remove(name),
-
     onSuccess: (_data, name) => {
       queryClient.removeQueries({ queryKey: datasetsQueryKeys.detail(name) })
       void queryClient.invalidateQueries({ queryKey: datasetsQueryKeys.all })
-    },
-
-    onError: (error) => {
-      console.error('[Datasets] Delete failed:', error)
     },
   })
 }

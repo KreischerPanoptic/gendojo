@@ -70,6 +70,12 @@ Inference and evaluation live in a separate project: **GenUI** — a NestJS API 
 
 ---
 
+## Credits
+
+The training engine powering GenDojo is [kohya-ss/sd-scripts](https://github.com/kohya-ss/sd-scripts). Thank you for the incredible work and for making it available to the community!
+
+---
+
 ## License
 
 MIT

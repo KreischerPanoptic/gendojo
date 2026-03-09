@@ -10,7 +10,7 @@ export class AuthController {
 
   /**
    * POST /auth/login
-   * Публичный эндпоинт — guard пропускает его через @SkipAuth()
+   * Public endpoint — guard passes it via @SkipAuth()
    *
    * Body: { username: string, password: string }
    * Response: { accessToken: string, username: string }

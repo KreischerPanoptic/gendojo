@@ -1,14 +1,10 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { modelsApi, type ModelsListParams } from './api'
 import { modelsQueryKeys } from './keys'
+import type { ModelArchitecture } from './types'
 
 // ─────────────────────────────────────────────────────────────────────────────
 
-/**
- * Polls GET /models every 15s.
- * Models change only when the user downloads or manually adds files —
- * no need for aggressive polling like datasets.
- */
 export const useModels = (params?: ModelsListParams) => {
   return useQuery({
     queryKey: modelsQueryKeys.all,
@@ -21,7 +17,6 @@ export const useModels = (params?: ModelsListParams) => {
 
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** Force-refresh the model cache (POST /models/refresh). */
 export const useRefreshModels = () => {
   const queryClient = useQueryClient()
 
@@ -33,5 +28,23 @@ export const useRefreshModels = () => {
     onError: (error) => {
       console.error('[Models] Refresh failed:', error)
     },
+  })
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Fast file-presence check for an architecture.
+ * Does NOT compute hashes — safe to run on mount.
+ * Refetches whenever the models list is invalidated.
+ */
+export const useArchReadiness = (arch: ModelArchitecture) => {
+  return useQuery({
+    queryKey: modelsQueryKeys.readiness(arch),
+    queryFn: () => modelsApi.checkArchReadiness(arch),
+    // Don't auto-poll — revalidate when models list changes
+    staleTime: Infinity,
+    throwOnError: false,
+    enabled: arch !== 'unknown',
   })
 }

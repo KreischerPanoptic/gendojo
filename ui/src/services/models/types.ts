@@ -1,5 +1,6 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // Mirror of api/src/models/entities/models.types.ts
+// Mirror of api/src/models/entities/models.integrity.types.ts
 // Date fields come as ISO strings over JSON.
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -36,25 +37,72 @@ export type ModelRole =
 export type ModelType = 'checkpoint' | 'lora' | 'vae' | 'text_encoder' | 'unknown'
 
 export interface ModelFile {
-  /** Relative path used as stable ID, e.g. "flux/clip_l.safetensors" */
   id: string
-  /** Filename without extension */
   name: string
-  /** Original filename with extension */
   filename: string
-  /** Relative path from the models root */
   relativePath: string
-  /** Absolute path on disk — pass this to sd-scripts */
   absolutePath: string
   arch: ModelArchitecture
   role: ModelRole
   type: ModelType
-  /** Raw file size in bytes */
   sizeBytes: number
-  /** File size rounded to 1 decimal place in MiB */
   sizeMb: number
-  /** ISO 8601 date string */
   modifiedAt: string
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Integrity types
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type IntegrityStatus = 'ok' | 'corrupted' | 'unknown'
+
+export interface FileIntegrityResult {
+  id: string
+  filename: string
+  status: IntegrityStatus
+  computedSha256: string
+  expectedSha256: string | null
+  sizeMb: number
+  checkedAt: string
+}
+
+export interface RolePresence {
+  role: ModelRole
+  required: boolean
+  present: boolean
+  files: ModelFile[]
+  expectedDir: string
+}
+
+export interface ArchReadinessResult {
+  arch: ModelArchitecture
+  ready: boolean
+  satisfiedVariant: ModelRole[] | null
+  missingRoles: ModelRole[]
+  rolePresence: RolePresence[]
+  checkedAt: string
+}
+
+export interface SharedFileWarning {
+  file: ModelFile
+  sharedWithArches: ModelArchitecture[]
+}
+
+export interface DeleteModelResult {
+  deleted: ModelFile[]
+  sharedWarnings: SharedFileWarning[]
+  deletedCount: number
+}
+
+export interface DeleteArchResult extends DeleteModelResult {
+  arch: ModelArchitecture
+}
+
+export interface DeleteArchPreview {
+  arch: ModelArchitecture
+  toDelete: ModelFile[]
+  sharedWarnings: SharedFileWarning[]
+  totalSizeMb: number
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

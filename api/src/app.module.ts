@@ -11,7 +11,7 @@ import { DatasetsModule } from './datasets/datasets.module';
 import { AuthModule } from './auth/auth.module';
 import { SettingsModule } from './system/settings/settings.module';
 import { join } from 'path';
-import { DownloaderModule } from './downloader/downloader.module';
+import { DownloaderModule } from './models/downloader/downloader.module';
 import { TokensModule } from './tokens/tokens.module';
 import { OutputsModule } from './jobs/outputs/outputs.module';
 import { PresetsModule } from './presets/presets.module';

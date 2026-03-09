@@ -33,7 +33,7 @@ export class AuthService {
 
   login(dto: LoginDto): LoginResponse {
     if (!this.authEnabled) {
-      // Dev режим — принимаем любые credentials, токен всё равно игнорируется guard-ом
+      // Dev mode — accepts any credentials, token ignored by guard
       const devToken = this.jwtService.sign({ sub: dto.username || 'dev' });
       return { accessToken: devToken, username: dto.username || 'dev' };
     }

@@ -14,4 +14,5 @@ export interface DatasetImageGridProps {
   selectedIndex?: number
   /** Passed straight to the ScrollArea's style — use to control fill strategy */
   scrollAreaStyle?: CSSProperties
+  editMode?: boolean
 }
