@@ -130,8 +130,11 @@ export class DatasetsService {
       });
     }
 
-    images.sort((a, b) => a.filename.localeCompare(b.filename));
-
+    let isAllNumbered = images.every(a => Number(a.filename.replace(/\b0+/g, '').replace(/\.[^/.]+$/, "")) !== Number.NaN)
+    if(isAllNumbered)
+      images.sort((a, b) => Number(a.filename.replace(/\b0+/g, '').replace(/\.[^/.]+$/, "")) - Number(b.filename.replace(/\b0+/g, '').replace(/\.[^/.]+$/, "")));
+    else
+      images.sort((a, b) => a.filename.localeCompare(b.filename));
     const captionedImages = images.filter(i => i.hasCaption);
     const captionedCount = captionedImages.length;
     const meta = await this.readMeta(datasetPath);

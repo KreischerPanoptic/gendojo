@@ -56,6 +56,8 @@ interface NewJobForm {
   datasetRef: string
   resolution: number
   enable_bucket: boolean
+  color_aug: boolean
+  flip_aug: boolean
   min_bucket_reso: number
   max_bucket_reso: number
   num_repeats: number
@@ -176,8 +178,15 @@ const COMMON_SIZES = [
   { label: '832×1216  portrait',  w: 832,  h: 1216 },
   { label: '1152×896  landscape', w: 1152, h: 896  },
   { label: '896×1152  portrait',  w: 896,  h: 1152 },
-  { label: '512×512',             w: 512,  h: 512  },
-  { label: '768×768',             w: 768,  h: 768  },
+  { label: '1344×768  wide landscape', w: 1344, h: 768  },
+  { label: '768×1344  tall portrait',  w: 768,  h: 1344 },
+  { label: '1536×640  extra wide landscape', w: 1536, h: 640  },
+  { label: '640×1536  extra tall portrait',  w: 640,  h: 1536 },
+  { label: '512×512 small',             w: 512,  h: 512  },
+  { label: '768×768 medium',             w: 768,  h: 768  },
+  { label: '1536×1536 large',             w: 1536,  h: 1536  },
+  { label: '2048×2048 2k',             w: 2048,  h: 2048  },
+  { label: '4096×4096 4k',             w: 4096,  h: 4096  },
 ]
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -222,7 +231,8 @@ const ARCH_DEFAULTS: Record<Arch, Partial<NewJobForm>> = {
 const DEFAULT_FORM: NewJobForm = {
   output_name: '', arch: 'flux',
   datasetRef: '', resolution: 1024, enable_bucket: true,
-  min_bucket_reso: 256, max_bucket_reso: 2048, num_repeats: 1, class_tokens: '',
+  min_bucket_reso: 768, max_bucket_reso: 1536, num_repeats: 1, class_tokens: '',
+  color_aug: false, flip_aug: false,
   pretrained_model_name_or_path: '',
   clip_l: '', clip_g: '', t5xxl: '', ae: '', vae: '',
   qwen3: '', gemma2: '', text_encoder: '', byt5: '',
@@ -252,8 +262,8 @@ const BLANK_PROMPT: SamplePromptInput = {
   seed: 42,
   width: 1024,
   height: 1024,
-  steps: 28,
-  cfg: 7.0,
+  steps: 30,
+  cfg: 6.0,
   withoutToken: false,
 }
 
@@ -373,6 +383,8 @@ function buildDatasetPreviewDto(form: NewJobForm) {
       min_bucket_reso: form.enable_bucket ? form.min_bucket_reso : undefined,
       max_bucket_reso: form.enable_bucket ? form.max_bucket_reso : undefined,
       batch_size:      1,
+      color_aug: form.color_aug,
+      flip_aug: form.flip_aug,
       subsets: [{
         image_dir:   `/workspace/datasets/${form.datasetRef}`,
         num_repeats: form.num_repeats,
@@ -876,6 +888,7 @@ export default function NewJobPage() {
                 />
                 <Select
                   label="Architecture"
+                  description="Architecture of model for training"
                   data={ARCH_OPTIONS}
                   value={form.arch}
                   onChange={handleArchChange}
@@ -956,15 +969,14 @@ export default function NewJobPage() {
                 {form.enable_bucket && <>
                   <NumberInput label="Min bucket reso"
                     value={form.min_bucket_reso}
-                    onChange={v => set('min_bucket_reso', Number(v) || 256)}
+                    onChange={v => set('min_bucket_reso', Number(v) || 768)}
                     min={64} max={1024} step={64} size="sm" />
                   <NumberInput label="Max bucket reso"
                     value={form.max_bucket_reso}
-                    onChange={v => set('max_bucket_reso', Number(v) || 2048)}
+                    onChange={v => set('max_bucket_reso', Number(v) || 1536)}
                     min={256} max={4096} step={64} size="sm" />
                 </>}
               </Group>
-
               <Group grow align="end">
                 <NumberInput
                   label="Num repeats" description="Dataset repeats per epoch"
@@ -976,6 +988,33 @@ export default function NewJobPage() {
                   value={form.class_tokens}
                   onChange={e => set('class_tokens', e.currentTarget.value)}
                   placeholder="e.g. a woman" size="sm" />
+              </Group>
+                                {
+                    /*
+                    color_aug 	false
+                    face_crop_aug_range 	[1.0, 3.0]
+                    flip_aug 	true
+                    */
+                  }
+              <Group grow align="end">
+                <Switch
+                  label="Color augmentation"
+                  description="Change colors randomly (not recommended for style)"
+                  checked={form.color_aug}
+                  onChange={e => set('color_aug', e.currentTarget.checked)} size="sm"
+                />
+                <Switch
+                  label="Flip augmentation"
+                  description="Created flipped images"
+                  checked={form.flip_aug}
+                  onChange={e => set('flip_aug', e.currentTarget.checked)} size="sm"
+                />
+                {/* <Switch
+                  label="Color augmentation"
+                  description="Change colors randomly (not recommended for style)"
+                  checked={form.face_crop}
+                  onChange={e => set('color_aug', e.currentTarget.checked)} size="sm"
+                /> */}
               </Group>
             </SectionCard>
 
@@ -1073,7 +1112,7 @@ export default function NewJobPage() {
                   value={form.network_alpha}
                   onChange={v => set('network_alpha', Number(v) || 1)}
                   min={0} max={512} step={0.5} decimalScale={2} size="sm" />
-                <TextInput label="Network module"
+                <TextInput label="Network module" description="Selected sd-scripts module for training"
                   value={trainPreview?.networkModule ?? '(auto from arch)'}
                   readOnly size="sm" c="dimmed"
                   styles={{ input: { fontSize: 12, fontFamily: 'monospace', cursor: 'not-allowed' } }} />
