@@ -9,6 +9,10 @@
 - `SettingsService` — merges env var defaults with persisted `settings.json` at `/workspace/gendojo/settings.json`; settings controller with full GET/PUT API
 - `TokensService` — stores HuggingFace and CivitAI tokens on disk; tokens are masked in all API responses (set flag + last-4 hint only)
 - `ModelsService` — scans model volumes with two-pass arch+role classification via ordered regex rules; `ARCH_ROLE_DIR` mapping for known subdirectory layouts
+  - **Delete single file** — `DELETE /models/:id`; returns `SharedFileWarning[]` when the file is physically shared across architectures (e.g. FLUX AE used by Chroma)
+  - **Delete architecture** — `DELETE /models/arch/:arch`; dry-run preview endpoint `GET /models/arch/:arch/delete-preview` returns full file list + shared warnings before any disk writes
+  - **File integrity check** — `GET /models/integrity?id=...`; SHA-256 computed via streaming `createReadStream`, compared against `model-hashes.registry.ts` (user-maintained, hash values sourced from HuggingFace); status: `ok` / `corrupted` / `unknown`
+  - **Architecture readiness check** — `GET /models/arch/:arch/readiness`; directory-based presence check against `ARCH_REQUIRED_ROLES` (OR-of-AND variants); correctly resolves shared dirs (Chroma finding AE/T5 in `flux/` subdirs even though files carry `arch: 'flux'` in cache)
 - `DatasetsModule` — full REST API for dataset management:
   - ZIP upload with automatic single-folder flattening and auto caption-type detection on first upload
   - Individual file upload, image replace (PUT), image delete (with companion caption cleanup)
@@ -31,7 +35,11 @@
 - Auth flow — login page, auth guard, token storage
 - Datasets page — list, upload via ZIP dropzone, view gallery with lightbox, edit captions with split-pane layout + keyboard navigation
 - Jobs page — job list table, new job form, live log streaming via Socket.IO
-- Models page — local model browser table
+- Models page — local model browser table grouped by architecture
+  - **Readiness badge** per architecture — `Ready` / `Incomplete` with tooltip listing missing roles; resolved via `GET /models/arch/:arch/readiness` on mount, invalidated on any model list change
+  - **Delete architecture** — button in accordion header; fetches dry-run preview first, shows confirmation modal with full file list and shared-file warnings (orange block); `e.stopPropagation()` to prevent accordion toggle
+  - **Delete single file** — per-row trash icon with confirm modal; post-delete notification if shared-arch warnings present
+  - **File integrity check** — per-row shield icon; triggers SHA-256 computation, result persists in panel state for the session and renders as colored badge (`ok` / `corrupted` / `no hash`)
 - HuggingFace downloader page
 - Settings page — theme toggle, token management (HF + CivitAI), path editor, training constants
 - Theme system — dark/light with system preference detection, persisted to localStorage
@@ -40,6 +48,14 @@
 
 ## 🔨 In progress / next up
 
+### Model management
+
+- [ ] **Hash registry** — populate `model-hashes.registry.ts` with SHA-256 values for preset models as they become available from HuggingFace
+- [ ] **Post-download integrity check** — `DownloaderService` already has `sha256?` field on `ModelPreset`; wire up auto-check in `runDownload()` after completion
+- [ ] CivitAI downloader page (backend already supports it)
+- [ ] LoRA merge UI (`networks/merge_lora.py`)
+- [ ] Format conversion — safetensors ↔ ckpt, fp32 → fp16/bf16
+
 ### Dataset preparation
 
 - [ ] **Token length preview** — WASM tokenizers (`@xenova/transformers`) in the browser for CLIP (77 tok) and T5 (256 tok); show per-caption token count and truncation cut point in the caption editor. Server already returns `isLongForClip` / `isLongForT5` as a cheap approximation.
@@ -47,12 +63,6 @@
 - [ ] VLM captioning — OpenAI / Gemini / local Qwen; caption from image + existing tags
 - [ ] Bulk caption operations — find/replace across all captions, tag frequency view
 - [ ] Masked loss mask editor
-
-### Model management
-
-- [ ] CivitAI downloader page (backend already supports it)
-- [ ] LoRA merge UI (`networks/merge_lora.py`)
-- [ ] Format conversion — safetensors ↔ ckpt, fp32 → fp16/bf16
 
 ### Training
 
