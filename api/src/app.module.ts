@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { ServeStaticModule } from '@nestjs/serve-static';
+import { ConfigModule as NestConfigModule } from '@nestjs/config';
 import { JobsModule } from './jobs/jobs.module';
 import { TomlService } from './toml/toml.service';
 import { ModelsService } from './models/models.service';
@@ -22,6 +23,7 @@ import { PresetsModule } from './presets/presets.module';
       rootPath: join(__dirname, '..', 'public'),
       exclude: ['/api/*path'],   // ← вместо '/api/(.*)'
     }),
+    NestConfigModule,
     JobsModule,
     OutputsModule,
     PresetsModule,

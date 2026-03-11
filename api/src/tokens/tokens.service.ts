@@ -103,8 +103,14 @@ export class TokensService implements OnModuleInit {
       const tokens = parsed['tokens'] as Partial<TokensSettings> | undefined;
 
       if (tokens) {
-        this.tokens.hfToken = tokens.hfToken ?? null;
-        this.tokens.civitaiToken = tokens.civitaiToken ?? null;
+        this.tokens.hfToken = tokens.hfToken ?? process.env.HF_TOKEN ?? null;
+        this.tokens.civitaiToken = tokens.civitaiToken ?? process.env.CIVITAI_TOKEN ?? null;
+      }
+      if(process.env.HF_TOKEN) {
+        this.tokens.hfToken = process.env.HF_TOKEN
+      }
+      if(process.env.CIVITAI_TOKEN) {
+        this.tokens.civitaiToken = process.env.CIVITAI_TOKEN;
       }
 
       this.logger.log('Tokens loaded from settings.json');

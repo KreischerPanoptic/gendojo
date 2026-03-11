@@ -22,6 +22,7 @@ import {
 } from './entities/downloader.types';
 import { findPreset, getPresetsByArch } from './presets/download.presets';
 import type { ModelPreset } from './entities/downloader.types';
+import { TokensService } from 'src/tokens/tokens.service';
 
 const HF_BASE = 'https://huggingface.co';
 
@@ -38,6 +39,7 @@ export class DownloaderService implements OnModuleInit {
   constructor(
     private readonly paths: PathsConfig,
     private readonly modelsService: ModelsService,
+    private readonly tokensService: TokensService
   ) {}
 
   async onModuleInit(): Promise<void> {
@@ -146,7 +148,7 @@ export class DownloaderService implements OnModuleInit {
     const source = this.detectSource(dto.url);
 
     return {
-      url: this.injectToken(dto.url, source),
+      url: dto.url,
       arch: dto.arch,
       role: dto.role,
       filename,
@@ -160,20 +162,11 @@ export class DownloaderService implements OnModuleInit {
       return url; // token goes in the Authorization header, not the URL for HF
     }
     if (preset.directUrl) {
-      return this.injectToken(preset.directUrl, preset.source);
+      return preset.directUrl;
     }
     throw new BadRequestException(
       `Preset "${preset.id}" has no resolvable URL.`,
     );
-  }
-
-  private injectToken(url: string, source: DownloadSource): string {
-    if (source === 'civitai' && process.env.CIVITAI_TOKEN) {
-      const u = new URL(url);
-      u.searchParams.set('token', process.env.CIVITAI_TOKEN);
-      return u.toString();
-    }
-    return url; // HF token injected as header in runDownload()
   }
 
   private detectSource(url: string): DownloadSource {
@@ -263,7 +256,9 @@ export class DownloaderService implements OnModuleInit {
         return reject(new Error('CANCELLED'));
       }
 
-      const hfToken = process.env.HF_TOKEN;
+      const hfToken = this.tokensService.getToken('hfToken');
+      const civitaiToken = this.tokensService.getToken('civitaiToken');
+
       const maxRedirects = 10;
 
       const follow = (url: string, redirectsLeft: number): void => {
@@ -283,6 +278,10 @@ export class DownloaderService implements OnModuleInit {
 
         if (job.source === 'huggingface' && hfToken) {
           headers['Authorization'] = `Bearer ${hfToken}`;
+        }
+
+        if(job.source === 'civitai' && civitaiToken) {
+          headers['Authorization'] = `Bearer ${civitaiToken}`;
         }
 
         const req = transport.get(url, { headers }, (res) => {
