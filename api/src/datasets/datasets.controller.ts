@@ -26,7 +26,7 @@ import * as fs from 'fs/promises';
 
 import { DatasetsService } from './datasets.service';
 import { SkipAuth } from 'src/auth/skip-auth.decorator';
-import type { DatasetMetaUpdate, PrependMode } from './entities/dataset-info.types';
+import type { DatasetMetaUpdate, PrependMode } from './types/dataset-info.types';
 
 // 500 MB zip limit
 const ZIP_MAX_SIZE_BYTES = 500 * 1024 * 1024;

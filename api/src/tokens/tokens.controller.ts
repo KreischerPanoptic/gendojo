@@ -7,7 +7,7 @@ import {
   Put,
 } from '@nestjs/common';
 import { TokensService } from './tokens.service';
-import type { UpdateTokensDto } from './entities/tokens.types';
+import type { UpdateTokensDto } from './types/tokens.types';
 
 @Controller('settings/tokens')
 export class TokensController {

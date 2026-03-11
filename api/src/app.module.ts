@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { ServeStaticModule } from '@nestjs/serve-static';
 import { ConfigModule as NestConfigModule } from '@nestjs/config';
+import { TypeOrmModule } from '@nestjs/typeorm';
 import { JobsModule } from './jobs/jobs.module';
 import { TomlService } from './toml/toml.service';
 import { ModelsService } from './models/models.service';
@@ -21,7 +22,19 @@ import { PresetsModule } from './presets/presets.module';
   imports: [
     ServeStaticModule.forRoot({
       rootPath: join(__dirname, '..', 'public'),
-      exclude: ['/api/*path'],   // ← вместо '/api/(.*)'
+      exclude: ['/api/*path'],
+    }),
+    TypeOrmModule.forRoot({
+      type: "better-sqlite3",
+      database: "dojoDB",
+      entities: [__dirname + "/**/*.entity{.ts,.js}"],
+      synchronize: process.env.NODE_ENV !== 'production',
+      statementCacheSize: 100,
+      prepareDatabase: (db) => {
+        db.pragma('journal_mode = WAL');
+        db.pragma('synchronous = NORMAL');
+        db.pragma('busy_timeout = 5000');
+      },
     }),
     NestConfigModule,
     JobsModule,
@@ -40,4 +53,4 @@ import { PresetsModule } from './presets/presets.module';
   controllers: [],
   providers: [TomlService, ModelsService],
 })
-export class AppModule {}
+export class AppModule { }

@@ -9,3 +9,8 @@ export class LoginDto {
   @IsNotEmpty()
   password: string;
 }
+
+export interface LoginResponseDto {
+  accessToken: string;
+  username: string;
+}

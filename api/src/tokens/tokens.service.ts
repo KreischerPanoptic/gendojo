@@ -5,7 +5,7 @@ import type {
   TokensSettings,
   TokensResponse,
   UpdateTokensDto,
-} from './entities/tokens.types';
+} from './types/tokens.types';
 
 /**
  * TokensService

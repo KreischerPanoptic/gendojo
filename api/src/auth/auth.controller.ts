@@ -1,6 +1,6 @@
 import { Body, Controller, Post, HttpCode, HttpStatus } from '@nestjs/common';
 import { AuthService } from './auth.service';
-import type { LoginResponse } from './auth.service'
+import type { LoginResponseDto } from './dto/login.dto'
 import { LoginDto } from './dto/login.dto';
 import { SkipAuth } from './skip-auth.decorator';
 
@@ -18,7 +18,7 @@ export class AuthController {
   @SkipAuth()
   @Post('login')
   @HttpCode(HttpStatus.OK)
-  login(@Body() dto: LoginDto): LoginResponse {
-    return this.authService.login(dto);
+  async login(@Body() dto: LoginDto): Promise<LoginResponseDto> {
+    return await this.authService.login(dto);
   }
 }

@@ -8,7 +8,7 @@ import { SettingsService } from './settings.service';
 import type { AppSettings } from './settings.service';
 import { UpdateSettingsDto } from './dto/update-settings.dto';
 import { PathsConfig } from '../../config/paths.config';
-import type { PathsInfo } from './entities/settings.types';
+import type { PathsInfo } from './types/settings.types';
 @Controller('settings')
 export class SettingsController {
   constructor(

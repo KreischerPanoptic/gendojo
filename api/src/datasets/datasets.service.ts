@@ -28,7 +28,7 @@ import {
   type PrependMode,
   type PrependTokenResult,
   type UploadResult,
-} from './entities/dataset-info.types';
+} from './types/dataset-info.types';
 import { isCaption, isImage, stem } from 'src/utils/dataset';
 
 // ─────────────────────────────────────────────────────────────────────────────
