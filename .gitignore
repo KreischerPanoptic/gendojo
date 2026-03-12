@@ -139,3 +139,6 @@ desktop.ini
 *~
 *.suo
 *.user
+
+# Local SQLite DB
+*.sqlite3*
