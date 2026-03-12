@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import * as path from 'path';
-import { SettingsService } from '../system/settings/settings.service';
+import { SettingsService } from '../settings/settings.service';
 
 /**
  * Central path resolver.

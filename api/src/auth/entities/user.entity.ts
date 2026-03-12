@@ -11,8 +11,8 @@ export class User {
 
     @Column({ select: false })
     password: string;
-    
-    @Column({ select: false, nullable: true })
+
+    @Column({ type: 'varchar', select: false, nullable: true })
     mfaSecret: string | null;
 
     @Column({ default: false })

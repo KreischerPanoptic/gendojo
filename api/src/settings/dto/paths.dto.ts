@@ -20,4 +20,22 @@ export class PathsDto {
   @IsOptional()
   @IsString()
   sdScripts?: string;
+
+  @IsOptional()
+  @IsString()
+  accelerateConfig?: string;
+
+  @IsOptional()
+  @IsString()
+  temp?: string;
 }
+
+// export type PathsDto = {
+//   models?: string;
+//   datasets?: string;
+//   outputs?: string;
+//   logs?: string;
+//   sdScripts?: string;
+//   accelerateConfig?: string;
+//   temp?: string;
+// }

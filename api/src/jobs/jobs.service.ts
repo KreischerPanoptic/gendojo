@@ -1,4 +1,6 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository, In } from 'typeorm';
 import { spawn, ChildProcess } from 'child_process';
 import * as fs from 'fs/promises';
 import * as fsSync from 'fs';
@@ -7,7 +9,7 @@ import { randomUUID } from 'crypto';
 import { EventEmitter } from 'events';
 
 import { PathsConfig } from '../config/paths.config';
-import { SettingsService } from '../system/settings/settings.service';
+import { SettingsService } from '../settings/settings.service';
 import { TomlService } from '../toml/toml.service';
 import { DatasetsService } from '../datasets/datasets.service';
 import { validateTrainConfig } from '../utils/toml';
@@ -15,116 +17,94 @@ import { validateTrainConfig } from '../utils/toml';
 import type { DatasetTomlDto } from '../toml/dto/dataset-toml.dto';
 import {
   JobStatus,
-  TrainingJob,
-  JobSummary,
-  JobDetail,
-  CreateJobDto,
   DatasetRefOptions,
   SampleImagesConfig,
   LogLine,
   LogStream,
-  JobLogEvent,
-  JobStatusEvent,
-} from './entities/jobs.types';
+  JobProgress,
+} from './types/jobs.types';
+import { Job } from './entities/job.entity';
+import { CreateJobDto } from './dto/create-job.dto';
+import { JobDetailDto } from './dto/job-details.dto';
+import { JobSummaryDto } from './dto/job-summary.dto';
+import { JobLogEvent, JobStatusEvent } from './events/jobs.events';
 
-/** Filename written inside every jobDir to survive container restarts */
-const JOB_MANIFEST_FILENAME = 'job.json';
+// Matches: steps:  10%|███       | 2775/27750 [05:15<45:22,  1.42it/s, avr_loss=0.0979]
+const TQDM_REGEX = /steps:\s+(\d+)%\|.*\|\s+(\d+)\/(\d+)\s+\[([^<]+)<([^,]+),\s+([0-9.]+(?:it\/s|s\/it)),\s+avr_loss=([0-9.]+)\]/;
 
 @Injectable()
 export class JobsService extends EventEmitter implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(JobsService.name);
 
-  private readonly jobs      = new Map<string, TrainingJob>();
+  // Transient state
   private readonly processes = new Map<string, ChildProcess>();
+  private readonly liveLogs = new Map<string, LogLine[]>();
+  private readonly liveProgress = new Map<string, JobProgress>();
 
   constructor(
-    private readonly paths:    PathsConfig,
+    @InjectRepository(Job)
+    private readonly jobsRepo: Repository<Job>,
+    private readonly paths: PathsConfig,
     private readonly settings: SettingsService,
-    private readonly toml:     TomlService,
+    private readonly toml: TomlService,
     private readonly datasets: DatasetsService,
   ) {
     super();
     this.setMaxListeners(100);
   }
 
-  // ── Dynamic settings ───────────────────────────────────────────────────────
-
-  private get maxConcurrentJobs():    number { return this.settings.getTraining().maxConcurrentJobs;   }
-  private get logBufferSize():        number { return this.settings.getTraining().logBufferSize;       }
-  private get cpuThreadsPerProcess(): string { return String(this.settings.getTraining().cpuThreadsPerProcess); }
-
-  /**
-   * Base directory that holds all per-job subdirectories.
-   * Derived from PathsConfig.jobDir() so the two always stay in sync.
-   * e.g. /workspace/gendojo/jobs
-   */
-  private get jobsBaseDir(): string {
-    return path.dirname(this.paths.jobDir('_probe_'));
-  }
-
   // ── Lifecycle ──────────────────────────────────────────────────────────────
 
-  /**
-   * On startup, scan the jobs base directory for persisted job.json manifests
-   * and restore them into memory as archived jobs.
-   *
-   * Jobs that were Running or Pending when the container died are marked Failed
-   * (the process is gone and cannot be recovered).
-   */
   async onModuleInit(): Promise<void> {
-    await this.restoreArchivedJobs();
+    // DB Magic: bulk update all jobs that didn't survive a server restart
+    const result = await this.jobsRepo.update(
+      { status: In([JobStatus.Pending, JobStatus.Running]) },
+      { status: JobStatus.Failed, finishedAt: new Date() }
+    );
+    
+    if (result.affected && result.affected > 0) {
+      this.logger.log(`Marked ${result.affected} orphaned jobs as Failed`);
+    }
   }
 
   async onModuleDestroy(): Promise<void> {
-    this.logger.log('Module destroying — sending SIGTERM to all running processes');
+    this.logger.log('Destroying module — sending SIGTERM to running processes');
     for (const [jobId, proc] of this.processes) {
-      this.logger.log(`Terminating job ${jobId} (PID ${proc.pid})`);
-      proc.kill('SIGTERM');
+      if (proc.pid) process.kill(-proc.pid, 'SIGTERM');
     }
   }
 
   // ── Public API ─────────────────────────────────────────────────────────────
 
-  async create(dto: CreateJobDto): Promise<JobDetail> {
-    // 1. Resolve dataset
+  async create(dto: CreateJobDto): Promise<JobDetailDto> {
     const { datasetDto, datasetName } = await this.resolveDataset(dto);
 
-    // 2. Enforce concurrency cap
-    const running = [...this.jobs.values()].filter(j => j.status === JobStatus.Running);
-    if (running.length >= this.maxConcurrentJobs) {
-      throw Object.assign(
-        new Error(`Maximum concurrent jobs (${this.maxConcurrentJobs}) already running`),
-        { statusCode: 409 },
-      );
+    // Limit check via DB
+    const runningCount = await this.jobsRepo.count({ where: { status: JobStatus.Running } });
+    if (runningCount >= (this.settings.getTraining().maxConcurrentJobs ?? 1)) {
+      throw Object.assign(new Error('Too many running jobs'), { statusCode: 409 });
     }
 
-    // 3. Generate job ID and compute all paths
-    const jobId           = randomUUID();
-    const jobDir          = this.paths.jobDir(jobId);
+    const jobId = randomUUID();
+    const jobDir = this.paths.jobDir(jobId);
     const datasetTomlPath = path.join(jobDir, 'dataset.toml');
     const trainTomlPath   = path.join(jobDir, 'train.toml');
     const logFilePath     = path.join(jobDir, 'train.log');
 
-    // 4. Resolve output_dir.
-    //    Default: {outputs}/{outputName}/{jobId}-{ISODate}
-    //      - Top-level folder groups runs by name → easy navigation in the FS
-    //      - Sub-folder is unique per run → no cross-run checkpoint collisions
-    //        (especially important during iterative testing with the same name)
-    //    An explicit output_dir in the DTO overrides this default.
+    // Resolve output_dir
     const outputName  = dto.train.output_name || 'untitled';
-    const isoDate     = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19); // YYYY-MM-DDTHH-MM-SS
+    const isoDate     = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19); 
     const outputDir   = (dto.train.output_dir as string | undefined)
       ?? path.join(this.paths.outputs, outputName, `${jobId}-${isoDate}`);
 
-    // 5. Build enriched train DTO.
-    //    Inject dataset_config and output_dir, then sample params if configured.
+    // Build enriched train DTO
     let trainDto: Record<string, unknown> = {
       ...dto.train,
       output_dir:     outputDir,
       dataset_config: datasetTomlPath,
     };
 
-    // 5a. Inject sample image params when sampleImages is provided
+    // Inject sample image params
     let samplePromptsPath: string | undefined;
     if (dto.sampleImages && dto.sampleImages.prompts.length > 0) {
       samplePromptsPath = path.join(jobDir, 'prompts.txt');
@@ -141,7 +121,7 @@ export class JobsService extends EventEmitter implements OnModuleInit, OnModuleD
       };
     }
 
-    // 6. Validate enriched train config
+    // Validate config
     const validation = validateTrainConfig(trainDto as unknown as Parameters<typeof validateTrainConfig>[0]);
     if (!validation.valid) {
       const messages = validation.errors.map(e => `${e.field}: ${e.message}`).join('; ');
@@ -151,21 +131,18 @@ export class JobsService extends EventEmitter implements OnModuleInit, OnModuleD
       );
     }
 
-    // 7. Create job directory (only after validation — no orphaned dirs on 422)
+    // Create directories and write files
     await fs.mkdir(jobDir, { recursive: true });
 
-    // 8. Write prompts.txt if sampleImages configured
     if (dto.sampleImages && samplePromptsPath) {
       const promptsContent = this.formatPromptsFile(dto.sampleImages);
       await fs.writeFile(samplePromptsPath, promptsContent, 'utf8');
       this.logger.log(`Job ${jobId}: prompts.txt → ${samplePromptsPath}`);
     }
 
-    // 9. Resolve training script
     const script     = this.toml.getTrainScript(dto.train.arch);
     const scriptPath = path.join(this.paths.sdScripts, script);
 
-    // 10. Generate and write TOML files
     const datasetTomlContent = this.toml.generateDatasetToml(datasetDto);
     const trainTomlContent   = this.toml.generateTrainToml(
       trainDto as unknown as Parameters<typeof this.toml.generateTrainToml>[0],
@@ -174,22 +151,18 @@ export class JobsService extends EventEmitter implements OnModuleInit, OnModuleD
     await fs.writeFile(datasetTomlPath, datasetTomlContent, 'utf8');
     await fs.writeFile(trainTomlPath,   trainTomlContent,   'utf8');
 
-    this.logger.log(`Job ${jobId}: dataset.toml → ${datasetTomlPath}`);
-    this.logger.log(`Job ${jobId}: train.toml   → ${trainTomlPath}`);
-
-    // 11. Build display command string
     const command = [
       'accelerate', 'launch',
       '--config_file', this.paths.accelerateConfig,
-      '--num_cpu_threads_per_process', this.cpuThreadsPerProcess,
+      '--num_cpu_threads_per_process',  (this.settings.getTraining().cpuThreadsPerProcess ?? 1),
       scriptPath,
       '--config_file', trainTomlPath,
     ].join(' ');
 
-    // 12. Register job record
-    const job: TrainingJob = {
+    // Save job to DB
+    const job = this.jobsRepo.create({
       id: jobId,
-      name: outputName,
+      name: dto.train.output_name || (datasetName ?? 'untitled'),
       arch: dto.train.arch,
       datasetName,
       jobDir,
@@ -199,66 +172,57 @@ export class JobsService extends EventEmitter implements OnModuleInit, OnModuleD
       script,
       command,
       status: JobStatus.Pending,
-      logBuffer: [],
-      createdAt: new Date().toISOString(),
       outputDir,
       samplePromptsPath,
-    };
-    this.jobs.set(jobId, job);
+    });
 
-    // 13. Persist manifest before launching — ensures the job survives even
-    //     if the container dies between creation and process start.
-    await this.persistJob(job);
+    await this.jobsRepo.save(job);
+    
+    // Initialize empty log buffer for WebSockets
+    this.liveLogs.set(job.id, []);
 
-    this.launch(job);
-
-    return this.toDetail(job);
+    this.launch(job); 
+    return { ...job, logBuffer: [] };
   }
 
-  list(): JobSummary[] {
-    return [...this.jobs.values()].map(j => this.toSummary(j));
+  async list(): Promise<JobSummaryDto[]> {
+    return this.jobsRepo.find({ order: { createdAt: 'DESC' } });
   }
 
-  getById(id: string): JobDetail | undefined {
-    const job = this.jobs.get(id);
-    return job ? this.toDetail(job) : undefined;
-  }
+  async getById(id: string): Promise<JobDetailDto | null> {
+    const job = await this.jobsRepo.findOneBy({ id });
+    if (!job) return null;
 
-  getRaw(id: string): TrainingJob | undefined {
-    return this.jobs.get(id);
+    const logBuffer = this.liveLogs.get(id) || [];
+    return { ...job, logBuffer };
   }
 
   getLogs(id: string): LogLine[] | undefined {
-    return this.jobs.get(id)?.logBuffer;
+    return this.liveLogs.get(id);
   }
 
   async kill(id: string): Promise<boolean> {
-    const job = this.jobs.get(id);
+    const job = await this.jobsRepo.findOneBy({ id });
     if (!job || job.status !== JobStatus.Running) return false;
 
     const proc = this.processes.get(id);
     if (!proc || proc.pid === undefined) return false;
 
-    // Mark as killed BEFORE sending signal — the 'close' handler checks this
-    // and must not overwrite it with 'failed' after a user-initiated kill.
     job.status     = JobStatus.Killed;
-    job.finishedAt = new Date().toISOString();
+    job.finishedAt = new Date();
     this.emit('job:status', { jobId: id, status: JobStatus.Killed } as JobStatusEvent);
-    void this.persistJob(job);
+    await this.jobsRepo.save(job);
 
     const pgid = proc.pid;
     this.logger.log(`Killing job ${id} (PID ${pgid}, process group -${pgid})`);
 
     try {
-      // Kill entire process group: accelerate + all its Python children
       process.kill(-pgid, 'SIGTERM');
     } catch (err) {
-      // Process may have already exited between the guard check and here
       this.logger.warn(`SIGTERM to process group -${pgid} failed: ${(err as Error).message}`);
       return false;
     }
 
-    // Give SIGTERM 5 s to clean up, then force-kill
     await new Promise<void>(resolve => setTimeout(resolve, 5000));
 
     if (this.processes.has(id)) {
@@ -266,121 +230,15 @@ export class JobsService extends EventEmitter implements OnModuleInit, OnModuleD
       try {
         process.kill(-pgid, 'SIGKILL');
       } catch {
-        // Already gone — fine
+        // Already gone
       }
     }
 
     return true;
   }
 
-  // ── Job persistence ────────────────────────────────────────────────────────
-
-  /**
-   * Write a job.json manifest to the job directory.
-   * The manifest is a serialised snapshot of the TrainingJob record minus the
-   * in-memory logBuffer (the full log is already on disk at logFilePath).
-   *
-   * Called at every significant lifecycle transition so the latest status is
-   * always persisted before a potential container restart.
-   */
-  private async persistJob(job: TrainingJob): Promise<void> {
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    const { logBuffer: _lb, ...manifest } = job;
-    const manifestPath = path.join(job.jobDir, JOB_MANIFEST_FILENAME);
-    try {
-      await fs.writeFile(manifestPath, JSON.stringify(manifest, null, 2), 'utf8');
-    } catch (err) {
-      this.logger.error(`Failed to persist manifest for job ${job.id}: ${(err as Error).message}`);
-    }
-  }
-
-  /**
-   * Scan the jobs base directory for existing job.json manifests and restore
-   * them into memory as archived (read-only) jobs.
-   *
-   * Only runs on module init — live jobs created in this process are never
-   * treated as archived.
-   *
-   * Jobs that were Running or Pending when the container died are promoted to
-   * Failed because their process no longer exists.
-   */
-  private async restoreArchivedJobs(): Promise<void> {
-    const baseDir = this.jobsBaseDir;
-
-    let entries: string[];
-    try {
-      entries = await fs.readdir(baseDir);
-    } catch {
-      // Base dir doesn't exist yet — no jobs to restore
-      this.logger.debug('Jobs base directory not found — skipping archive restore');
-      return;
-    }
-
-    let restoredCount  = 0;
-    let promotedCount  = 0;
-
-    for (const entry of entries) {
-      const manifestPath = path.join(baseDir, entry, JOB_MANIFEST_FILENAME);
-
-      let raw: string;
-      try {
-        raw = await fs.readFile(manifestPath, 'utf8');
-      } catch {
-        // Not a job directory or manifest missing — skip silently
-        continue;
-      }
-
-      let manifest: Omit<TrainingJob, 'logBuffer'>;
-      try {
-        manifest = JSON.parse(raw) as Omit<TrainingJob, 'logBuffer'>;
-      } catch (err) {
-        this.logger.warn(`Corrupt job manifest at ${manifestPath} — skipping`);
-        continue;
-      }
-
-      if (!manifest.id || !manifest.status) {
-        this.logger.warn(`Incomplete job manifest at ${manifestPath} — skipping`);
-        continue;
-      }
-
-      // Skip if we somehow already have this job (shouldn't happen on init)
-      if (this.jobs.has(manifest.id)) continue;
-
-      const job: TrainingJob = {
-        ...manifest,
-        logBuffer: [],  // log is on disk; in-memory buffer starts empty
-        archived:  true,
-      };
-
-      // Jobs that were mid-flight when the container died can never be resumed
-      if (job.status === JobStatus.Running || job.status === JobStatus.Pending) {
-        job.status     = JobStatus.Failed;
-        job.finishedAt = job.finishedAt ?? new Date().toISOString();
-        promotedCount++;
-        // Persist the corrected status back to disk
-        void this.persistJob(job);
-      }
-
-      this.jobs.set(job.id, job);
-      restoredCount++;
-    }
-
-    if (restoredCount > 0) {
-      this.logger.log(
-        `Restored ${restoredCount} archived job(s) from ${baseDir}` +
-        (promotedCount > 0 ? ` (${promotedCount} promoted Running→Failed)` : ''),
-      );
-    }
-  }
-
   // ── Sample prompts serialisation ──────────────────────────────────────────
 
-  /**
-   * Format SampleImagesConfig into prompts.txt content for sd-scripts.
-   *
-   * Output format (one line per prompt):
-   *   token. Prompt text --d 42 --w 1216 --h 832 --s 28 --c 7.0 --n negative
-   */
   private formatPromptsFile(config: SampleImagesConfig): string {
     const { prompts, activationToken, captionStyle = 'natural' } = config;
     const sep = captionStyle === 'natural' ? '. ' : ', ';
@@ -388,14 +246,12 @@ export class JobsService extends EventEmitter implements OnModuleInit, OnModuleD
     const lines = prompts.map(p => {
       const parts: string[] = [];
 
-      // Build prompt text — prepend activation token unless withoutToken=true
       let promptText = p.prompt;
       if (activationToken && !p.withoutToken) {
         promptText = `${activationToken}${sep}${p.prompt}`;
       }
       parts.push(promptText);
 
-      // Append sd-scripts inline flags
       if (p.seed      !== undefined) parts.push(`--d ${p.seed}`);
       if (p.width     !== undefined) parts.push(`--w ${p.width}`);
       if (p.height    !== undefined) parts.push(`--h ${p.height}`);
@@ -507,45 +363,29 @@ export class JobsService extends EventEmitter implements OnModuleInit, OnModuleD
 
   // ── Process management ─────────────────────────────────────────────────────
 
-  private launch(job: TrainingJob): void {
+  private async launch(job: Job): Promise<void> {
     this.logger.log(`Launching job ${job.id}: ${job.command}`);
 
     const args = [
       '--config_file', this.paths.accelerateConfig,
-      '--num_cpu_threads_per_process', this.cpuThreadsPerProcess,
+      '--num_cpu_threads_per_process', `${(this.settings.getTraining().cpuThreadsPerProcess ?? 1)}`,
       path.join(this.paths.sdScripts, job.script),
       '--config_file', job.trainTomlPath,
     ];
 
     const accelerateBin = process.env['ACCELERATE_BIN'] ?? 'accelerate';
 
-    this.logger.log(`[spawn] bin: ${accelerateBin}`);
-    this.logger.log(`[spawn] PATH: ${process.env['PATH']}`);
-    this.logger.log(`[spawn] cwd: ${this.paths.sdScripts}`);
-    this.logger.log(`[spawn] args: ${['launch', ...args].join(' ')}`);
-
-    try {
-      require('fs').accessSync(this.paths.sdScripts);
-      this.logger.log(`[spawn] cwd exists: yes`);
-    } catch {
-      this.logger.error(`[spawn] cwd does NOT exist: ${this.paths.sdScripts}`);
-    }
-
     const proc = spawn(accelerateBin, ['launch', ...args], {
       cwd: this.paths.sdScripts,
       env: { ...process.env },
-      // detached = true → Node creates a new process group (pgid = proc.pid)
-      // This is what makes `process.kill(-pgid, signal)` work to kill all children.
       detached: true,
     });
 
-    job.pid       = proc.pid;
     job.status    = JobStatus.Running;
-    job.startedAt = new Date().toISOString();
+    job.startedAt = new Date();
     this.processes.set(job.id, proc);
 
-    // Persist Running status + pid so a crash here is recoverable
-    void this.persistJob(job);
+    await this.jobsRepo.save(job);
 
     const logStream = fsSync.createWriteStream(job.logFilePath, { flags: 'a' });
     let logStreamClosed = false;
@@ -561,8 +401,12 @@ export class JobsService extends EventEmitter implements OnModuleInit, OnModuleD
       if (!logStreamClosed) {
         this.appendLog(job, entry, logStream);
       } else {
-        job.logBuffer.push(entry);
-        if (job.logBuffer.length > this.logBufferSize) job.logBuffer.shift();
+        // Fallback if the stream closed but we still caught a stray log
+        const buffer = this.liveLogs.get(job.id) || [];
+        buffer.push(entry);
+        if (buffer.length > (this.settings.getTraining().logBufferSize ?? 200)) {
+          buffer.shift();
+        }
         this.emit('job:log', { jobId: job.id, line: entry } as JobLogEvent);
       }
     };
@@ -577,37 +421,45 @@ export class JobsService extends EventEmitter implements OnModuleInit, OnModuleD
       this.handleOutput(job, chunk, 'stderr', logStream);
     });
 
-    proc.on('close', (code: number | null, signal: string | null) => {
+    proc.on('close', async (code: number | null, signal: string | null) => {
       safeEndStream();
       this.processes.delete(job.id);
 
       const exitCode = code ?? (signal ? 1 : 0);
       job.exitCode   = exitCode;
-      job.finishedAt = new Date().toISOString();
+      job.finishedAt = new Date();
 
-      // Do NOT overwrite Killed status — kill() already set it and emitted the event
+      // Extract final stats from transient memory before cleaning up
+      const finalProgress = this.liveProgress.get(job.id);
+      if (finalProgress) {
+        job.finalLoss = finalProgress.avrLoss;
+        job.totalSteps = finalProgress.totalSteps;
+      }
+      this.liveProgress.delete(job.id);
+
       if (job.status !== JobStatus.Killed) {
         job.status = exitCode === 0 ? JobStatus.Done : JobStatus.Failed;
         this.emit('job:status', { jobId: job.id, status: job.status, exitCode } as JobStatusEvent);
       }
 
-      void this.persistJob(job);
+      await this.jobsRepo.save(job);
 
       this.logger.log(
         `Job ${job.id} finished: status=${job.status}, exit=${exitCode}, signal=${signal ?? '-'}`,
       );
     });
 
-    proc.on('error', (err: Error) => {
+    proc.on('error', async (err: Error) => {
       this.processes.delete(job.id);
       job.status     = JobStatus.Failed;
-      job.finishedAt = new Date().toISOString();
+      job.finishedAt = new Date();
+      this.liveProgress.delete(job.id);
 
       this.logger.error(`Job ${job.id} process error: ${err.message}`);
       safeAppendLog({ ts: Date.now(), stream: 'stderr', text: `[process error] ${err.message}` });
       safeEndStream();
 
-      void this.persistJob(job);
+      await this.jobsRepo.save(job);
       this.emit('job:status', { jobId: job.id, status: JobStatus.Failed } as JobStatusEvent);
     });
 
@@ -615,7 +467,7 @@ export class JobsService extends EventEmitter implements OnModuleInit, OnModuleD
   }
 
   private handleOutput(
-    job: TrainingJob,
+    job: Job,
     chunk: string,
     stream: LogStream,
     logStream: fsSync.WriteStream,
@@ -628,28 +480,42 @@ export class JobsService extends EventEmitter implements OnModuleInit, OnModuleD
     }
   }
 
-  private appendLog(
-    job: TrainingJob,
-    entry: LogLine,
-    logStream: fsSync.WriteStream,
-  ): void {
-    job.logBuffer.push(entry);
-    if (job.logBuffer.length > this.logBufferSize) {
-      job.logBuffer.shift();
+  private appendLog(job: Job, entry: LogLine, logStream: fsSync.WriteStream): void {
+    // 1. Manage in-memory log buffer
+    const buffer = this.liveLogs.get(job.id) || [];
+    if (!this.liveLogs.has(job.id)) this.liveLogs.set(job.id, buffer); // Safety check
+
+    buffer.push(entry);
+    if (buffer.length > (this.settings.getTraining().logBufferSize ?? 200)) {
+      buffer.shift();
     }
+    
+    // 2. Write to disk
     logStream.write(`[${new Date(entry.ts).toISOString()}] [${entry.stream}] ${entry.text}\n`);
-    this.emit('job:log', { jobId: job.id, line: entry } as JobLogEvent);
-  }
+    
+    // 3. Broadcast standard log event
+    this.emit('job:log', { jobId: job.id, line: entry });
 
-  // ── Serialisation helpers ─────────────────────────────────────────────────
+    // 4. Try to parse training progress from stderr
+    if (entry.stream === 'stderr') {
+      const match = entry.text.match(TQDM_REGEX);
+      if (match) {
+        const progress: JobProgress = {
+          percent:    parseInt(match[1], 10),
+          step:       parseInt(match[2], 10),
+          totalSteps: parseInt(match[3], 10),
+          elapsed:    match[4],
+          eta:        match[5],
+          speed:      match[6],
+          avrLoss:    parseFloat(match[7]),
+        };
 
-  private toSummary(job: TrainingJob): JobSummary {
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    const { logBuffer: _lb, ...summary } = job;
-    return summary;
-  }
+        // Update transient state
+        this.liveProgress.set(job.id, progress);
 
-  private toDetail(job: TrainingJob): JobDetail {
-    return { ...job };
+        // Broadcast progress event specifically for UI progress bars
+        this.emit('job:progress', { jobId: job.id, progress });
+      }
+    }
   }
 }

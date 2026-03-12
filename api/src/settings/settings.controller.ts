@@ -5,10 +5,11 @@ import {
   Put,
 } from '@nestjs/common';
 import { SettingsService } from './settings.service';
-import type { AppSettings } from './settings.service';
 import { UpdateSettingsDto } from './dto/update-settings.dto';
-import { PathsConfig } from '../../config/paths.config';
-import type { PathsInfo } from './types/settings.types';
+import { PathsConfig } from '../config/paths.config';
+import type { PathsDto } from './dto/paths.dto';
+import type { SettingsDto } from './dto/settings.dto';
+
 @Controller('settings')
 export class SettingsController {
   constructor(
@@ -21,7 +22,7 @@ export class SettingsController {
    * Full settings object (paths + training constants).
    */
   @Get()
-  getSettings(): AppSettings {
+  getSettings(): SettingsDto {
     return this.settingsService.getSettings();
   }
 
@@ -32,7 +33,7 @@ export class SettingsController {
    * Includes static paths (accelerateConfig, temp) that are not editable via UI.
    */
   @Get('paths')
-  getPaths(): PathsInfo {
+  getPaths(): PathsDto {
     const p = this.settingsService.getPaths();
     return {
       models:           p.models,
@@ -50,7 +51,7 @@ export class SettingsController {
    * Update editable settings (paths + training constants).
    */
   @Put()
-  updateSettings(@Body() dto: UpdateSettingsDto): AppSettings {
-    return this.settingsService.update(dto);
+  async updateSettings(@Body() dto: UpdateSettingsDto): Promise<SettingsDto> {
+    return await this.settingsService.update(dto);
   }
 }

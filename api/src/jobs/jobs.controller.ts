@@ -11,9 +11,25 @@ import {
   ConflictException,
   UnprocessableEntityException,
 } from '@nestjs/common';
+import {
+  ApiTags,
+  ApiOperation,
+  ApiResponse,
+  ApiParam,
+  ApiBody,
+  ApiBearerAuth,
+  getSchemaPath,
+  ApiExtraModels,
+} from '@nestjs/swagger';
 
 import { JobsService } from './jobs.service';
-import type { CreateJobDto } from './entities/jobs.types';
+import type { CreateJobDto } from './dto/create-job.dto';
+import {
+  JobSummaryResponseDto,
+  JobDetailResponseDto,
+  KillJobResponseDto,
+  JobLogsResponseDto,
+} from './dto/job-response.dto';
 
 /**
  * REST API for training jobs.
@@ -24,24 +40,115 @@ import type { CreateJobDto } from './entities/jobs.types';
  * GET    /jobs/:id/logs — Get only the log buffer (cheaper poll alternative to WS)
  * DELETE /jobs/:id      — Kill a running job (SIGTERM → SIGKILL after 5 s)
  */
+@ApiTags('Jobs')
+@ApiBearerAuth()
+@ApiExtraModels(JobDetailResponseDto, JobSummaryResponseDto)
 @Controller('jobs')
 export class JobsController {
   constructor(private readonly jobsService: JobsService) {}
 
-  /**
-   * POST /jobs
-   *
-   * Validates, writes TOMLs, spawns accelerate launch.
-   * Returns the full job detail (with empty log buffer) on success.
-   *
-   * 422 — train config validation failed (field-level errors in body)
-   * 409 — maximum concurrent jobs already running
-   */
+  // ── Create ─────────────────────────────────────────────────────────────────
+
   @Post()
   @HttpCode(HttpStatus.CREATED)
-  async create(@Body() dto: CreateJobDto) {
+  @ApiOperation({
+    summary: 'Create and start a training job',
+    description:
+      'Validates the train config, writes `dataset.toml` and `train.toml` to the job directory, ' +
+      'then spawns `accelerate launch` in a detached process group. ' +
+      'The dataset can be supplied either as a reference to an existing dataset on disk (`datasetRef`) ' +
+      'or as an inline `DatasetTomlDto` definition — the two fields are mutually exclusive.',
+  })
+  @ApiBody({
+    description: 'Job creation payload — two mutually exclusive dataset modes',
+    schema: {
+      oneOf: [
+        {
+          title: 'CreateJobByRef',
+          description: 'Reference an existing dataset by name (resolved from /workspace/datasets/)',
+          required: ['train', 'datasetRef'],
+          properties: {
+            train: {
+              $ref: '#/components/schemas/TrainTomlDto',
+              description: 'Arch-discriminated training config',
+            },
+            datasetRef: {
+              type: 'string',
+              description: 'Dataset name as it appears under the datasets root directory',
+              example: 'portraits-512',
+            },
+            datasetOptions: {
+              type: 'object',
+              description:
+                'Optional overrides for the auto-generated dataset.toml when using datasetRef. ' +
+                'Controls resolution, bucketing, repeats, etc.',
+              properties: {
+                resolution:        { oneOf: [{ type: 'integer' }, { type: 'array', items: { type: 'integer' }, minItems: 2, maxItems: 2 }], example: 1024 },
+                enable_bucket:     { type: 'boolean', example: true },
+                min_bucket_reso:   { type: 'integer', example: 256 },
+                max_bucket_reso:   { type: 'integer', example: 2048 },
+                batch_size:        { type: 'integer', example: 1 },
+                num_repeats:       { type: 'integer', example: 10 },
+                shuffle_caption:   { type: 'boolean', example: false },
+                keep_tokens:       { type: 'integer', example: 1 },
+                caption_extension: { type: 'string', example: '.txt' },
+                class_tokens:      { type: 'string', example: 'person' },
+                flip_aug:          { type: 'boolean', example: false },
+              },
+            },
+            sampleImages: { $ref: '#/components/schemas/SampleImagesConfig' },
+          },
+        },
+        {
+          title: 'CreateJobInline',
+          description: 'Provide a full inline dataset.toml definition',
+          required: ['train', 'dataset'],
+          properties: {
+            train:        { $ref: '#/components/schemas/TrainTomlDto' },
+            dataset:      { $ref: '#/components/schemas/DatasetTomlDto' },
+            sampleImages: { $ref: '#/components/schemas/SampleImagesConfig' },
+          },
+        },
+      ],
+    },
+  })
+  @ApiResponse({
+    status: 201,
+    description: 'Job created and process spawned. Returns full job detail with empty log buffer.',
+    type: JobDetailResponseDto,
+  })
+  @ApiResponse({
+    status: 409,
+    description: 'Maximum concurrent jobs already running (default limit: 1).',
+  })
+  @ApiResponse({
+    status: 422,
+    description: 'Train config validation failed. Body contains field-level errors.',
+    schema: {
+      properties: {
+        message:    { type: 'string', example: 'Train config validation failed' },
+        validation: {
+          type: 'object',
+          properties: {
+            valid:  { type: 'boolean', example: false },
+            errors: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  field:   { type: 'string', example: 'learning_rate' },
+                  message: { type: 'string', example: 'must be a positive number' },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+  })
+  async create(@Body() dto: CreateJobDto): Promise<JobDetailResponseDto> {
     try {
-      return await this.jobsService.create(dto);
+      return await this.jobsService.create(dto) as JobDetailResponseDto;
     } catch (err: unknown) {
       const e = err as { statusCode?: number; message?: string; validation?: unknown };
       if (e.statusCode === 422) {
@@ -57,48 +164,82 @@ export class JobsController {
     }
   }
 
-  /**
-   * GET /jobs
-   * Returns all jobs without their log buffers (cheap for polling / UI list).
-   */
+  // ── List ───────────────────────────────────────────────────────────────────
+
   @Get()
-  list() {
-    return this.jobsService.list();
+  @ApiOperation({
+    summary: 'List all jobs',
+    description:
+      'Returns all jobs ordered by `createdAt` descending. ' +
+      'Does not include the log buffer — use `GET /jobs/:id` or WebSockets for logs. ' +
+      'Suitable for polling the jobs list page.',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Array of job summaries (no log buffer, no internal command/script fields)',
+    type: [JobSummaryResponseDto],
+  })
+  async list(): Promise<JobSummaryResponseDto[]> {
+    return await this.jobsService.list() as JobSummaryResponseDto[];
   }
 
-  /**
-   * GET /jobs/:id
-   * Returns full job detail including log buffer.
-   */
+  // ── Get one ────────────────────────────────────────────────────────────────
+
   @Get(':id')
-  getOne(@Param('id') id: string) {
-    const job = this.jobsService.getById(id);
+  @ApiOperation({
+    summary: 'Get job detail',
+    description:
+      'Returns the full job record plus the in-memory log ring buffer. ' +
+      '`logBuffer` is present only while the job is Running — finished jobs have an empty array. ' +
+      'For historical logs of finished jobs, read the log file from `logFilePath`.',
+  })
+  @ApiParam({ name: 'id', description: 'Job UUID', format: 'uuid' })
+  @ApiResponse({ status: 200, description: 'Job found', type: JobDetailResponseDto })
+  @ApiResponse({ status: 404, description: 'Job not found' })
+  async getOne(@Param('id') id: string): Promise<JobDetailResponseDto> {
+    const job = await this.jobsService.getById(id);
     if (!job) throw new NotFoundException(`Job not found: ${id}`);
-    return job;
+    return job as JobDetailResponseDto;
   }
 
-  /**
-   * GET /jobs/:id/logs
-   * Returns only the log buffer array — useful when polling instead of WS.
-   */
+  // ── Logs ───────────────────────────────────────────────────────────────────
+
   @Get(':id/logs')
-  getLogs(@Param('id') id: string) {
+  @ApiOperation({
+    summary: 'Get in-memory log buffer',
+    description:
+      'Returns the current ring buffer for a running job without the full job record. ' +
+      'Cheaper than `GET /jobs/:id` for clients that only need to poll logs. ' +
+      'Prefer WebSockets (`job:subscribe`) for live streaming — this endpoint is a fallback.',
+  })
+  @ApiParam({ name: 'id', description: 'Job UUID', format: 'uuid' })
+  @ApiResponse({ status: 200, description: 'Log buffer', type: JobLogsResponseDto })
+  @ApiResponse({ status: 404, description: 'Job not found' })
+  getLogs(@Param('id') id: string): JobLogsResponseDto {
     const logs = this.jobsService.getLogs(id);
     if (!logs) throw new NotFoundException(`Job not found: ${id}`);
     return { logs };
   }
 
-  /**
-   * DELETE /jobs/:id
-   * Kill a running job. Idempotent — returns 200 even if already finished.
-   * Body: { force?: boolean }  (force=true skips the SIGTERM grace period)
-   */
+  // ── Kill ───────────────────────────────────────────────────────────────────
+
   @Delete(':id')
   @HttpCode(HttpStatus.OK)
-  async kill(@Param('id') id: string) {
-    const job = this.jobsService.getById(id);
+  @ApiOperation({
+    summary: 'Kill a running job',
+    description:
+      'Sends `SIGTERM` to the entire `accelerate` process group. ' +
+      'If the process does not exit within 5 seconds, follows up with `SIGKILL`. ' +
+      'Idempotent — returns 200 even if the job is already finished or was never running. ' +
+      '`killed: false` means the process was not found (already done/failed/killed).',
+  })
+  @ApiParam({ name: 'id', description: 'Job UUID', format: 'uuid' })
+  @ApiResponse({ status: 200, description: 'Kill attempted', type: KillJobResponseDto })
+  @ApiResponse({ status: 404, description: 'Job not found' })
+  async kill(@Param('id') id: string): Promise<KillJobResponseDto> {
+    const job = await this.jobsService.getById(id);
     if (!job) throw new NotFoundException(`Job not found: ${id}`);
     const killed = await this.jobsService.kill(id);
-    return { killed, status: this.jobsService.getById(id)?.status };
+    return { killed, status: (await this.jobsService.getById(id))?.status };
   }
 }

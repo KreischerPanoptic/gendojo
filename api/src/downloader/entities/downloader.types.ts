@@ -1,5 +1,5 @@
 import { IsEnum, IsOptional, IsString, ValidateIf } from 'class-validator';
-import type { ModelArchitecture, ModelRole } from '../../entities/models.types';
+import type { ModelArchitecture, ModelRole } from '../../models/entities/models.types';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Domain types

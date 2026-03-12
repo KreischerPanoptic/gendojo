@@ -127,7 +127,7 @@ export class OutputsService {
    * Never throws on missing files — missing outputDir returns empty lists.
    */
   async getOutputs(jobId: string): Promise<JobOutputs> {
-    const job = this.jobsService.getRaw(jobId);
+    const job = await this.jobsService.getById(jobId);
     if (!job) throw new NotFoundException(`Job not found: ${jobId}`);
 
     const { outputDir, samplePromptsPath } = job;
@@ -159,7 +159,7 @@ export class OutputsService {
    * Throws NotFoundException if the job or file doesn't exist.
    */
   async resolvePreviewPath(jobId: string, filename: string): Promise<string> {
-    const job = this.jobsService.getRaw(jobId);
+    const job = await this.jobsService.getById(jobId);
     if (!job) throw new NotFoundException(`Job not found: ${jobId}`);
 
     // Sanitise — no path traversal
@@ -178,7 +178,7 @@ export class OutputsService {
    * Throws NotFoundException if the job or file doesn't exist.
    */
   async resolveCheckpointPath(jobId: string, filename: string): Promise<string> {
-    const job = this.jobsService.getRaw(jobId);
+    const job = await this.jobsService.getById(jobId);
     if (!job) throw new NotFoundException(`Job not found: ${jobId}`);
 
     const safeFilename = path.basename(filename);

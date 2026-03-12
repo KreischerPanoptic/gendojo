@@ -4,12 +4,15 @@ import { JobsService } from './jobs.service';
 import { JobsGateway } from './jobs.gateway';
 import { TomlModule } from '../toml/toml.module';
 import { PathsConfig } from '../config/paths.config';
-import { SettingsModule } from '../system/settings/settings.module';
+import { SettingsModule } from '../settings/settings.module';
 import { DatasetsModule } from '../datasets/datasets.module';
+import { TypeOrmModule } from '@nestjs/typeorm';
+import { Job } from './entities/job.entity';
 
 @Module({
   imports: [
-    TomlModule,   // provides TomlService (generateDatasetToml, generateTrainToml, getTrainScript)
+    TypeOrmModule.forFeature([Job]),
+    TomlModule,
     DatasetsModule,
     SettingsModule
   ],
@@ -17,7 +20,7 @@ import { DatasetsModule } from '../datasets/datasets.module';
   providers: [
     JobsService,
     JobsGateway,
-    PathsConfig,  // not a global module — explicit injection per GenDojo convention
+    PathsConfig,
   ],
   exports: [JobsService],
 })

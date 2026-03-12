@@ -24,9 +24,18 @@ import type { Response } from 'express';
 import * as path from 'path';
 import * as fs from 'fs/promises';
 
+// import { 
+//   DatasetSummaryDto, 
+//   DatasetDetailDto, 
+//   // DatasetMetaUpdateDto, 
+//   // CaptionTypeDetectionResultDto,
+//   // UploadResultDto
+// } from './dto/datasets.dto';
+
 import { DatasetsService } from './datasets.service';
 import { SkipAuth } from 'src/auth/skip-auth.decorator';
 import type { DatasetMetaUpdate, PrependMode } from './types/dataset-info.types';
+import { ApiBody, ApiConsumes, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 
 // 500 MB zip limit
 const ZIP_MAX_SIZE_BYTES = 500 * 1024 * 1024;
@@ -81,6 +90,7 @@ const VALID_PREPEND_MODES = new Set<PrependMode>([
  * detect-caption-type, meta, export) are declared BEFORE parameterised routes
  * (:name, :name/images/:filename, etc.) to avoid path-to-regexp v8 conflicts.
  */
+@ApiTags('Datasets') // Собирает всё в одну группу в Swagger UI
 @Controller('datasets')
 export class DatasetsController {
   constructor(private readonly datasetsService: DatasetsService) {}
@@ -106,6 +116,19 @@ export class DatasetsController {
       limits: { fileSize: ZIP_MAX_SIZE_BYTES },
     }),
   )
+  @ApiOperation({ summary: 'Upload a dataset as a zip archive' })
+  @ApiConsumes('multipart/form-data')
+  @ApiBody({
+    schema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Target dataset name' },
+        file: { type: 'string', format: 'binary', description: 'Zip archive (max 500 MB)' },
+      },
+      required: ['name', 'file'],
+    },
+  })
+  @ApiResponse({ status: 201, description: 'Upload Result' })
   async uploadZip(
     @UploadedFile(
       new ParseFilePipe({

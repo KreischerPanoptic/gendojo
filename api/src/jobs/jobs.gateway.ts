@@ -12,32 +12,20 @@ import { Logger, OnModuleInit } from '@nestjs/common';
 import { Server, Socket } from 'socket.io';
 
 import { JobsService } from './jobs.service';
-import type { JobLogEvent, JobStatusEvent } from './entities/jobs.types';
+import type { JobLogEvent, JobStatusEvent, JobProgressEvent } from './events/jobs.events';
 
 /**
  * Socket.IO gateway for real-time job log streaming.
  *
  * Connection lifecycle
- *   1. Client connects → immediately gets a list of all job summaries
- *   2. Client subscribes to a job: emit `job:subscribe` with `{ jobId: string }`
- *      → joined into room `job:{jobId}`
- *      → immediately receives the full log buffer via `job:history`
- *   3. From then on, new log lines are pushed as `job:log` events
- *   4. Status changes are pushed as `job:status` events to all subscribers
- *   5. Client can unsubscribe: `job:unsubscribe` with `{ jobId: string }`
- *
- * Event reference
- *
- *   Client → Server
- *     job:subscribe    { jobId: string }
- *     job:unsubscribe  { jobId: string }
- *
- *   Server → Client
- *     jobs:list        JobSummary[]              (on connect)
- *     job:history      { jobId, lines: LogLine[] }   (on subscribe)
- *     job:log          JobLogEvent               (live, in room)
- *     job:status       JobStatusEvent            (live, in room + global)
- *     job:error        { message: string }
+ * 1. Client connects → immediately gets a list of all job summaries
+ * 2. Client subscribes to a job: emit `job:subscribe` with `{ jobId: string }`
+ * → joined into room `job:{jobId}`
+ * → immediately receives the full log buffer via `job:history`
+ * 3. From then on, new log lines are pushed as `job:log` events
+ * 4. Progress updates from tqdm are pushed as `job:progress` events
+ * 5. Status changes are pushed as `job:status` events to all subscribers
+ * 6. Client can unsubscribe: `job:unsubscribe` with `{ jobId: string }`
  */
 @WebSocketGateway({
   cors: { origin: '*' }, // tightened in production via NestJS CORS middleware
@@ -62,10 +50,15 @@ export class JobsGateway
       this.server.to(`job:${event.jobId}`).emit('job:log', event);
     });
 
+    // 🚀 NEW: Broadcast high-frequency progress updates to subscribers
+    this.jobsService.on('job:progress', (event: JobProgressEvent) => {
+      this.server.to(`job:${event.jobId}`).emit('job:progress', event);
+    });
+
     this.jobsService.on('job:status', (event: JobStatusEvent) => {
       // Broadcast to subscribers of this job
       this.server.to(`job:${event.jobId}`).emit('job:status', event);
-      // Also broadcast to all connected clients (for the jobs list to update)
+      // Also broadcast to all connected clients (for the global jobs list to update)
       this.server.emit('job:status', event);
     });
   }
@@ -76,10 +69,16 @@ export class JobsGateway
 
   // ── Connection handling ────────────────────────────────────────────────────
 
-  handleConnection(client: Socket): void {
+  // 🚀 FIXED: Made async because jobsService.list() now queries SQLite
+  async handleConnection(client: Socket): Promise<void> {
     this.logger.debug(`Client connected: ${client.id}`);
-    // Send current job summaries on connect so the UI can hydrate immediately
-    client.emit('jobs:list', this.jobsService.list());
+    
+    try {
+      const summaries = await this.jobsService.list();
+      client.emit('jobs:list', summaries);
+    } catch (err) {
+      this.logger.error(`Failed to fetch job list for client ${client.id}`, err);
+    }
   }
 
   handleDisconnect(client: Socket): void {
@@ -88,10 +87,6 @@ export class JobsGateway
 
   // ── Message handlers ───────────────────────────────────────────────────────
 
-  /**
-   * Subscribe to a job room.
-   * Immediately returns the full log history so the UI can render past output.
-   */
   @SubscribeMessage('job:subscribe')
   handleSubscribe(
     @ConnectedSocket() client: Socket,
@@ -115,11 +110,12 @@ export class JobsGateway
 
     // Replay full history so the client can render from the start
     client.emit('job:history', { jobId, lines: logs });
+    
+    // Note: We don't need to manually emit the current progress here.
+    // sd-scripts emits tqdm updates so frequently (multiple times a second)
+    // that the client will receive a fresh 'job:progress' event almost instantly.
   }
 
-  /**
-   * Unsubscribe from a job room.
-   */
   @SubscribeMessage('job:unsubscribe')
   handleUnsubscribe(
     @ConnectedSocket() client: Socket,

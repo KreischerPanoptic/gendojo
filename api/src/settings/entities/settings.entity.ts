@@ -3,9 +3,8 @@ import { Entity, Column, PrimaryColumn } from 'typeorm';
 @Entity('settings')
 export class Settings {
   @PrimaryColumn({ default: 'GLOBAL_CONFIG' })
-  id: string = 'GLOBAL_CONFIG'; // Гарантирует, что запись всегда одна
+  id: string = 'GLOBAL_CONFIG';
 
-  // --- PathsInfo ---
   @Column()
   modelsPath: string;
 

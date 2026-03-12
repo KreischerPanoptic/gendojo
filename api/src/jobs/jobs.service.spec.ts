@@ -1,11 +1,11 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { JobsService } from './jobs.service';
-import { JobStatus } from './entities/jobs.types';
+import { JobStatus } from './types/jobs.types';
 import { PathsConfig } from '../config/paths.config';
 import { TomlService } from '../toml/toml.service';
 import { DatasetsService } from '../datasets/datasets.service';
 import { NotFoundException } from '@nestjs/common';
-import type { CreateJobDto } from './entities/jobs.types';
+import type { CreateJobDto } from './types/jobs.types';
 
 // ─── Mocks ────────────────────────────────────────────────────────────────────
 

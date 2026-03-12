@@ -11,9 +11,9 @@ import { SystemModule } from './system/system.module';
 import { ConfigModule } from './config/config.module';
 import { DatasetsModule } from './datasets/datasets.module';
 import { AuthModule } from './auth/auth.module';
-import { SettingsModule } from './system/settings/settings.module';
+import { SettingsModule } from './settings/settings.module';
 import { join } from 'path';
-import { DownloaderModule } from './models/downloader/downloader.module';
+import { DownloaderModule } from './downloader/downloader.module';
 import { TokensModule } from './tokens/tokens.module';
 import { OutputsModule } from './jobs/outputs/outputs.module';
 import { PresetsModule } from './presets/presets.module';
@@ -26,7 +26,7 @@ import { PresetsModule } from './presets/presets.module';
     }),
     TypeOrmModule.forRoot({
       type: "better-sqlite3",
-      database: "dojoDB",
+      database: "../dojo.sqlite3",
       entities: [__dirname + "/**/*.entity{.ts,.js}"],
       synchronize: process.env.NODE_ENV !== 'production',
       statementCacheSize: 100,

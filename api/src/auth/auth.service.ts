@@ -78,12 +78,11 @@ export class AuthService implements OnApplicationBootstrap {
       });
       await this.userRepository.update(userId, { mfaSecret: secret });
 
-      const qrDataUrl = await QRCode.toDataURL(uri);
-
+      const qrCode = await QRCode.toDataURL(uri);
       return {
         secret,
-        qrCode: await QRCode.toDataURL(qrDataUrl),
-        url: qrDataUrl
+        qrCode,  // data:image/png;base64,...
+        url: uri, // otpauth://totp/GenDojo:admin?secret=...
       };
     }
     return null;

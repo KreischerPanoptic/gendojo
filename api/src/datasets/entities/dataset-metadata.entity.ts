@@ -27,7 +27,7 @@ export class DatasetMetadata {
   @Column({ type: 'int', default: 0 })
   keep_tokens_count: number;
 
-  @Column({ type: 'bool', default: false })
+  @Column({ type: 'boolean', default: false })
   has_captions: boolean;
 
   @Column({ default: 'unknown' })
