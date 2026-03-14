@@ -36,7 +36,7 @@ export class Job {
   @Column({ type: 'varchar', default: JobStatus.Pending })
   status: JobStatus;
 
-  @Column({ nullable: true })
+  @Column({ type: 'integer', nullable: true })
   exitCode?: number;
 
   @Column()
@@ -57,6 +57,6 @@ export class Job {
   @Column({ type: 'float', nullable: true })
   finalLoss?: number;
 
-  @Column({ nullable: true })
+  @Column({ type: 'integer', nullable: true })
   totalSteps?: number;
 }

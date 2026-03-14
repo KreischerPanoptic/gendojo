@@ -3,7 +3,7 @@ import * as fs from 'fs/promises';
 import * as path from 'path';
 
 import { JobsService } from '../jobs.service';
-import type { JobOutputs, Checkpoint, CheckpointPreview, SamplePrompt } from './entities/outputs.types';
+import type { JobOutputs, Checkpoint, CheckpointPreview, SamplePrompt } from './types/outputs.types';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Filename patterns — sd-scripts generates different formats per architecture

@@ -1,19 +1,19 @@
 import { Module } from '@nestjs/common';
 import { DownloaderController } from './downloader.controller';
 import { DownloaderService } from './downloader.service';
-import { PathsConfig } from '../config/paths.config';
 import { ModelsModule } from '../models/models.module';
-import { SettingsModule } from 'src/settings/settings.module';
-import { TokensModule } from 'src/tokens/tokens.module';
-import { TokensService } from 'src/tokens/tokens.service';
+import { TokensModule } from '../settings/tokens/tokens.module';
 
+/**
+ * PathsConfig is provided by @Global() ConfigModule — no need to declare it here.
+ * TokensService is exported from TokensModule — import the module, not the service directly.
+ */
 @Module({
   imports: [
     ModelsModule,
-    SettingsModule,
-    TokensModule
+    TokensModule,
   ],
   controllers: [DownloaderController],
-  providers: [DownloaderService, PathsConfig, TokensService],
+  providers: [DownloaderService],
 })
 export class DownloaderModule {}

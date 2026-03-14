@@ -2,8 +2,15 @@ import { Entity, Column, PrimaryColumn } from 'typeorm';
 
 @Entity('settings')
 export class Settings {
-  @PrimaryColumn({ default: 'GLOBAL_CONFIG' })
+  /**
+   * Single-row config table — always keyed to 'GLOBAL_CONFIG'.
+   * Using a string PK instead of a surrogate integer makes the intent explicit
+   * and avoids accidental duplicate rows.
+   */
+  @PrimaryColumn()
   id: string = 'GLOBAL_CONFIG';
+
+  // ── Paths ─────────────────────────────────────────────────────────────────
 
   @Column()
   modelsPath: string;
@@ -25,16 +32,32 @@ export class Settings {
 
   @Column()
   tempPath: string;
-  
-  @Column()
-  maxConcurrentJobs?: number;
 
-  @Column()
-  logBufferSize?: number;
+  // ── Training constants ────────────────────────────────────────────────────
 
-  @Column()
-  cpuThreadsPerProcess?: number;
+  /**
+   * Maximum number of training jobs that can run concurrently.
+   * Enforced in JobsService before spawning a new accelerate process.
+   */
+  @Column({ type: 'integer', default: 1 })
+  maxConcurrentJobs: number;
+
+  /**
+   * Size of the in-memory log ring buffer (lines) per job.
+   * Older lines are evicted when the buffer is full.
+   */
+  @Column({ type: 'integer', default: 2000 })
+  logBufferSize: number;
+
+  /**
+   * Value passed to accelerate --num_cpu_threads_per_process.
+   * Higher values improve data loading throughput at the cost of CPU contention.
+   */
+  @Column({ type: 'integer', default: 2 })
+  cpuThreadsPerProcess: number;
+
+  // ── UI ────────────────────────────────────────────────────────────────────
 
   @Column({ default: 'auto' })
-  theme: 'dark' | 'light' | 'auto'
+  theme: 'dark' | 'light' | 'auto';
 }

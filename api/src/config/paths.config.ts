@@ -3,114 +3,93 @@ import * as path from 'path';
 import { SettingsService } from '../settings/settings.service';
 
 /**
- * Central path resolver.
+ * Central path resolver — thin delegate over SettingsService.
  *
- * Values are sourced from SettingsService which merges:
- *   1. Environment variables (defaults)
- *   2. settings.json (overrides via UI)
+ * All paths are ultimately stored in the `settings` SQLite table and editable
+ * via PUT /settings. On first boot they are seeded from environment variables
+ * (see SettingsService.buildDefaultsFromEnv).
  *
- * Docker / RunPod env:
- *   MODELS_PATH="/workspace/models"
- *   DATASETS_PATH="/workspace/datasets"
- *   OUTPUTS_PATH="/workspace/outputs"
- *   LOGS_PATH="/workspace/logs"
- *   SD_SCRIPTS_PATH="/app/sd-scripts"
- *   ACCELERATE_CONFIG_PATH="/app/config_files/accelerate/runpod.yaml"
- *   TEMP_PATH="/workspace/temp"
+ * PathsConfig adds derived helpers (jobDir, datasetToml, …) on top of the
+ * raw paths. It is provided as @Global() in ConfigModule so every module can
+ * inject it without a local import.
+ *
+ * Docker / RunPod env vars (used for first-boot seeding only):
+ *   MODELS_PATH             /workspace/models
+ *   DATASETS_PATH           /workspace/datasets
+ *   OUTPUTS_PATH            /workspace/outputs
+ *   LOGS_PATH               /workspace/logs
+ *   SD_SCRIPTS_PATH         /app/sd-scripts
+ *   ACCELERATE_CONFIG_PATH  /app/config_files/accelerate/runpod.yaml
+ *   TEMP_PATH               /workspace/temp
  */
 @Injectable()
 export class PathsConfig {
-  private readonly accelerateConfigResolved: string;
-  private readonly tempResolved: string;
+  constructor(private readonly settingsService: SettingsService) {}
 
-  constructor(private readonly settingsService: SettingsService) {
-    const repo = path.resolve(__dirname, '..', '..', '..'); // api/src/config → repo root
+  // ── Delegated paths (all sourced from DB via SettingsService) ─────────────
 
-    this.accelerateConfigResolved =
-      process.env['ACCELERATE_CONFIG_PATH'] ??
-      path.join(repo, 'configs', 'accelerate', 'default_config.yaml');
-
-    this.tempResolved =
-      process.env['TEMP_PATH'] ??
-      path.join(repo, 'temp');
-  }
-
-  // ------------------------------------------------------------------ //
-  //  Paths delegated to SettingsService (editable via UI)
-  // ------------------------------------------------------------------ //
-
-  /** Absolute path to the models volume */
   get models(): string {
     return this.settingsService.getPaths().models;
   }
 
-  /** Absolute path to the datasets volume */
   get datasets(): string {
     return this.settingsService.getPaths().datasets;
   }
 
-  /** Absolute path to the training outputs volume */
   get outputs(): string {
     return this.settingsService.getPaths().outputs;
   }
 
   /**
-   * Absolute path to the logs root.
-   * Individual job logs live in {logs}/jobs/{jobId}/
+   * Root log directory.
+   * Individual job logs live in {logs}/jobs/{jobId}/training.log
    */
   get logs(): string {
     return this.settingsService.getPaths().logs;
   }
 
   /**
-   * Absolute path to the sd-scripts git submodule directory.
-   * Training scripts are found here (flux_train_network.py, etc.).
+   * Path to the sd-scripts git submodule.
+   * Training entry-points (flux_train_network.py, etc.) are found here.
    */
   get sdScripts(): string {
     return this.settingsService.getPaths().sdScripts;
   }
 
-  // ------------------------------------------------------------------ //
-  //  Static paths (not editable via UI, only via env)
-  // ------------------------------------------------------------------ //
-
   /**
-   * Absolute path to the accelerate config YAML used at launch.
-   * If the file does not exist at startup the service logs a warning —
-   * accelerate will fall back to its own defaults.
+   * Accelerate config YAML passed via --config_file at launch.
+   * Editable via UI; falls back to the bundled default_config.yaml on first boot.
    */
   get accelerateConfig(): string {
-    return this.accelerateConfigResolved;
+    return this.settingsService.getPaths().accelerateConfig;
   }
 
   /**
-   * Absolute path to the temp directory root.
-   * Used for ephemeral files generated before/during a job run.
+   * Temp directory root for ephemeral job artefacts (TOML configs, etc.).
+   * Files here are cleaned up after the job completes.
    */
   get temp(): string {
-    return this.tempResolved;
+    return this.settingsService.getPaths().temp;
   }
 
-  // ------------------------------------------------------------------ //
-  //  Derived path helpers
-  // ------------------------------------------------------------------ //
+  // ── Derived path helpers ──────────────────────────────────────────────────
 
-  /** Directory for a specific job's working files (toml configs, log file) */
+  /** Working directory for a job's persistent files (log file, job.json manifest) */
   jobDir(jobId: string): string {
     return path.join(this.logs, 'jobs', jobId);
   }
 
-  /** Temp directory for a specific job (dataset.toml, train.toml before launch) */
+  /** Temp directory for a job's ephemeral config files */
   jobTempDir(jobId: string): string {
     return path.join(this.temp, 'jobs', jobId);
   }
 
-  /** Path to the dataset config TOML for a job */
+  /** Absolute path to dataset.toml for a job */
   datasetToml(jobId: string): string {
     return path.join(this.jobTempDir(jobId), 'dataset.toml');
   }
 
-  /** Path to the training config TOML for a job */
+  /** Absolute path to train.toml for a job */
   trainToml(jobId: string): string {
     return path.join(this.jobTempDir(jobId), 'train.toml');
   }

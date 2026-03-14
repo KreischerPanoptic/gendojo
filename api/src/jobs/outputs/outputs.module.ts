@@ -15,7 +15,7 @@ import { JobsModule } from '../jobs.module';
  *   GET /jobs/:id/outputs/download/:filename
  */
 @Module({
-  imports: [JobsModule],       // provides JobsService via exports
+  imports: [JobsModule],
   controllers: [OutputsController],
   providers: [OutputsService],
 })

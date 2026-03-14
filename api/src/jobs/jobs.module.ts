@@ -19,8 +19,7 @@ import { Job } from './entities/job.entity';
   controllers: [JobsController],
   providers: [
     JobsService,
-    JobsGateway,
-    PathsConfig,
+    JobsGateway
   ],
   exports: [JobsService],
 })

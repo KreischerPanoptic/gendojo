@@ -1,34 +1,46 @@
 import {
   Controller,
   Get,
+  HttpCode,
+  HttpStatus,
   Param,
   Res,
   BadRequestException,
 } from '@nestjs/common';
+import {
+  ApiTags,
+  ApiBearerAuth,
+  ApiOperation,
+  ApiParam,
+  ApiResponse,
+} from '@nestjs/swagger';
 import type { Response } from 'express';
 import * as path from 'path';
 
 import { OutputsService } from './outputs.service';
 import { SkipAuth } from 'src/auth/skip-auth.decorator';
+import { JobOutputsDto } from './dto/job-outputs.dto';
 
 /**
- * REST API for job output artifacts (checkpoints + preview images).
+ * REST API for job output artifacts (checkpoints + sample preview images).
  *
  * All routes are nested under /jobs/:id to keep outputs in job context.
  *
- * GET  /jobs/:id/outputs                    — scan output_dir, return JobOutputs
- * GET  /jobs/:id/outputs/previews/:filename — serve a sample PNG (SkipAuth)
- * GET  /jobs/:id/outputs/download/:filename — download a checkpoint .safetensors
+ * GET  /jobs/:id/outputs                    — scan output_dir, return JobOutputsDto
+ * GET  /jobs/:id/outputs/previews/:filename — serve a sample PNG     [@SkipAuth]
+ * GET  /jobs/:id/outputs/download/:filename — download a checkpoint  [@SkipAuth]
  *
  * Security:
- *   - filename params are passed through path.basename() before use
+ *   - filename params are stripped with path.basename() before use
  *   - OutputsService only resolves paths inside the job's outputDir
  *   - No path traversal possible
  *
  * NOTE: This controller uses @Controller('jobs') alongside JobsController.
- * NestJS resolves routes by specificity — ':id/outputs' is more specific
+ * NestJS resolves routes by specificity — ':id/outputs*' is more specific
  * than ':id', so there is no conflict.
  */
+@ApiTags('Jobs')
+@ApiBearerAuth()
 @Controller('jobs')
 export class OutputsController {
   constructor(private readonly outputsService: OutputsService) {}
@@ -36,17 +48,26 @@ export class OutputsController {
   /**
    * GET /jobs/:id/outputs
    *
-   * Scans the job's output_dir on disk and returns:
-   *   - checkpoints[] with epoch/step/size and matching preview filenames
-   *   - prompts[]     parsed from prompts.txt
-   *   - outputDir     resolved absolute path
-   *   - sampleDir     null if sample/ subdirectory doesn't exist yet
+   * Scans the job's output_dir and returns:
+   *   - checkpoints[]   sorted by epoch/step ascending (final last)
+   *   - prompts[]       parsed from prompts.txt (empty if not configured)
+   *   - outputDir       resolved absolute path
+   *   - sampleDir       null if sample/ subdirectory doesn't exist yet
    *
-   * Safe to call while job is running — returns whatever is on disk right now.
-   * Poll every few seconds during training to show new checkpoints/previews.
+   * Safe to call while a job is running — returns whatever is on disk right now.
    */
   @Get(':id/outputs')
-  async getOutputs(@Param('id') id: string) {
+  @ApiOperation({
+    summary: 'Get job output artifacts',
+    description:
+      'Scans the job output directory and returns all checkpoints with matched preview images. ' +
+      'Safe to poll while the job is running. ' +
+      'Checkpoints are sorted by epoch/step ascending; the final checkpoint appears last.',
+  })
+  @ApiParam({ name: 'id', description: 'Job UUID', format: 'uuid' })
+  @ApiResponse({ status: 200, description: 'Output artifacts', type: JobOutputsDto })
+  @ApiResponse({ status: 404, description: 'Job not found' })
+  async getOutputs(@Param('id') id: string): Promise<JobOutputsDto> {
     return this.outputsService.getOutputs(id);
   }
 
@@ -54,16 +75,28 @@ export class OutputsController {
    * GET /jobs/:id/outputs/previews/:filename
    *
    * Serves a sample preview PNG from {output_dir}/sample/.
-   * SkipAuth — preview images don't contain sensitive model weights.
-   * Cached for 1 hour (images are immutable once written by sd-scripts).
+   * @SkipAuth — preview images are referenced directly from <img> tags in the UI
+   *             and do not contain sensitive model weights.
+   * Cached for 1 hour — preview PNGs are immutable once written by sd-scripts.
    */
   @SkipAuth()
   @Get(':id/outputs/previews/:filename')
+  @ApiOperation({
+    summary: 'Serve a sample preview image (no auth required)',
+    description:
+      'Returns the raw PNG bytes for a sample image from {output_dir}/sample/. ' +
+      'No authentication required — safe for use in <img src="..."> tags.',
+  })
+  @ApiParam({ name: 'id', description: 'Job UUID', format: 'uuid' })
+  @ApiParam({ name: 'filename', description: 'Preview PNG filename', example: 'lora_e000004_01_20260308225827.png' })
+  @ApiResponse({ status: 200, description: 'PNG image bytes', content: { 'image/png': {} } })
+  @ApiResponse({ status: 400, description: 'Not a PNG file' })
+  @ApiResponse({ status: 404, description: 'Job or preview file not found' })
   async servePreview(
     @Param('id')       id: string,
     @Param('filename') filename: string,
     @Res()             res: Response,
-  ) {
+  ): Promise<void> {
     const safeFilename = path.basename(filename);
     if (!safeFilename.endsWith('.png')) {
       throw new BadRequestException('Only PNG preview files are served from this endpoint');
@@ -79,16 +112,33 @@ export class OutputsController {
   /**
    * GET /jobs/:id/outputs/download/:filename
    *
-   * Triggers a browser download for a checkpoint .safetensors file.
-   * Content-Disposition: attachment causes the browser to save the file.
-   * No caching — checkpoints can be large and are accessed infrequently.
+   * Triggers a browser download of a checkpoint .safetensors file.
+   * @SkipAuth — required to allow direct <a href="..."> downloads from the UI
+   *             without having to inject auth headers into the download link.
+   * No caching — checkpoints are large and accessed infrequently.
    */
+  @SkipAuth()
   @Get(':id/outputs/download/:filename')
+  @ApiOperation({
+    summary: 'Download a checkpoint file (no auth required)',
+    description:
+      'Returns the .safetensors checkpoint as an attachment download. ' +
+      'No authentication required — safe for direct <a href="..."> download links in the UI.',
+  })
+  @ApiParam({ name: 'id', description: 'Job UUID', format: 'uuid' })
+  @ApiParam({ name: 'filename', description: 'Checkpoint filename', example: 'lora-000004e.safetensors' })
+  @ApiResponse({
+    status: 200,
+    description: 'Checkpoint binary stream — Content-Disposition: attachment',
+    content: { 'application/octet-stream': {} },
+  })
+  @ApiResponse({ status: 400, description: 'Not a .safetensors file' })
+  @ApiResponse({ status: 404, description: 'Job or checkpoint not found' })
   async downloadCheckpoint(
     @Param('id')       id: string,
     @Param('filename') filename: string,
     @Res()             res: Response,
-  ) {
+  ): Promise<void> {
     const safeFilename = path.basename(filename);
     if (!safeFilename.endsWith('.safetensors')) {
       throw new BadRequestException('Only .safetensors files are available for download');

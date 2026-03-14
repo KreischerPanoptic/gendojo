@@ -5,6 +5,10 @@ import {
   ConflictException,
   BadRequestException,
 } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { DeepPartial, Repository } from 'typeorm';
+import { randomUUID } from 'crypto';
+import * as os from 'os';
 import * as fs from 'fs/promises';
 import * as fsSync from 'fs';
 import * as path from 'path';
@@ -14,6 +18,7 @@ import { pipeline } from 'stream/promises';
 import archiver from 'archiver';
 
 import { PathsConfig } from '../config/paths.config';
+import { DatasetMetadata } from './entities/dataset-metadata.entity';
 import {
   CAPTION_LENGTH_THRESHOLDS,
   type CaptionLengthSummary,
@@ -28,21 +33,20 @@ import {
   type PrependMode,
   type PrependTokenResult,
   type UploadResult,
-} from './types/dataset-info.types';
+} from './types/datasets.types';
 import { isCaption, isImage, stem } from 'src/utils/dataset';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Constants
 // ─────────────────────────────────────────────────────────────────────────────
 
-const META_FILENAME = 'dataset.meta.json';
-
-/** Max captions to sample for caption-type detection */
+/** Maximum number of caption files to sample for caption-type detection */
 const DETECTION_SAMPLE_SIZE = 30;
 
 /** Fraction of sample ≥ this → tag_list */
 const TAG_LIST_THRESHOLD = 0.6;
-/** Fraction of sample ≤ this → natural_language (everything between is mixed) */
+
+/** Fraction of sample ≤ this → natural_language (everything between → mixed) */
 const MIXED_THRESHOLD = 0.2;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -53,7 +57,11 @@ const MIXED_THRESHOLD = 0.2;
 export class DatasetsService {
   private readonly logger = new Logger(DatasetsService.name);
 
-  constructor(private readonly paths: PathsConfig) {}
+  constructor(
+    private readonly paths: PathsConfig,
+    @InjectRepository(DatasetMetadata)
+    private readonly metaRepo: Repository<DatasetMetadata>,
+  ) {}
 
   // ══════════════════════════════════════════════════════════════════════════
   // READ
@@ -61,8 +69,10 @@ export class DatasetsService {
 
   /**
    * Scan the datasets root and return a summary for each subdirectory.
-   * Non-directory entries are ignored.
-   * NOTE: summaries do NOT include per-image captionStats for performance.
+   * Non-directory entries are silently ignored.
+   *
+   * All DB metadata is loaded in a single query to avoid N+1.
+   * CaptionStats are NOT included in list summaries — use getOne() for that.
    */
   async list(): Promise<DatasetSummary[]> {
     await this.ensureDatasetsRoot();
@@ -74,6 +84,12 @@ export class DatasetsService {
       return [];
     }
 
+    // Single query — map name → entity for O(1) lookup inside the loop
+    const allMeta = await this.metaRepo.find();
+    const metaMap = new Map<string, DatasetMeta>(
+      allMeta.map((m) => [m.name, this.entityToMeta(m)]),
+    );
+
     const results: DatasetSummary[] = [];
 
     for (const entry of entries) {
@@ -82,10 +98,15 @@ export class DatasetsService {
         const stat = await fs.stat(fullPath);
         if (!stat.isDirectory()) continue;
 
-        const summary = await this.summarise(entry, fullPath, stat.mtime);
+        const summary = await this.summarise(
+          entry,
+          fullPath,
+          stat.mtime,
+          metaMap.get(entry) ?? null,
+        );
         results.push(summary);
       } catch {
-        // Inaccessible directory — skip
+        // Inaccessible directory — skip silently
       }
     }
 
@@ -104,7 +125,7 @@ export class DatasetsService {
     const files = await fs.readdir(datasetPath);
 
     const captionStems = new Set(
-      files.filter(isCaption).map(f => stem(f)),
+      files.filter(isCaption).map((f) => stem(f)),
     );
 
     const images: DatasetImage[] = [];
@@ -130,20 +151,27 @@ export class DatasetsService {
       });
     }
 
-    let isAllNumbered = images.every(a => Number(a.filename.replace(/\b0+/g, '').replace(/\.[^/.]+$/, "")) !== Number.NaN)
-    if(isAllNumbered)
-      images.sort((a, b) => Number(a.filename.replace(/\b0+/g, '').replace(/\.[^/.]+$/, "")) - Number(b.filename.replace(/\b0+/g, '').replace(/\.[^/.]+$/, "")));
-    else
+    // Sort: numeric filenames first (by number), otherwise lexicographic
+    const isAllNumbered = images.every(
+      (a) => !isNaN(Number(a.filename.replace(/\b0+/g, '').replace(/\.[^/.]+$/, ''))),
+    );
+    if (isAllNumbered) {
+      images.sort(
+        (a, b) =>
+          Number(a.filename.replace(/\b0+/g, '').replace(/\.[^/.]+$/, '')) -
+          Number(b.filename.replace(/\b0+/g, '').replace(/\.[^/.]+$/, '')),
+      );
+    } else {
       images.sort((a, b) => a.filename.localeCompare(b.filename));
-    const captionedImages = images.filter(i => i.hasCaption);
+    }
+
+    const captionedImages = images.filter((i) => i.hasCaption);
     const captionedCount = captionedImages.length;
-    const meta = await this.readMeta(datasetPath);
+    const meta = await this.findMetaByName(name);
 
     const captionLengthSummary: CaptionLengthSummary | null =
       captionedCount > 0
-        ? this.computeCaptionLengthSummary(
-            captionedImages.map(i => i.captionStats!),
-          )
+        ? this.computeCaptionLengthSummary(captionedImages.map((i) => i.captionStats!))
         : null;
 
     return {
@@ -176,10 +204,11 @@ export class DatasetsService {
   /**
    * Extract a zip archive into /workspace/datasets/<n>/.
    *
-   * - Flattens one level of directory nesting (common when users zip a folder)
-   * - Skips __MACOSX, .DS_Store and other junk
+   * - Flattens one level of directory nesting (common when zipping a folder)
+   * - Skips __MACOSX, .DS_Store and other hidden junk
    * - Merges files on conflict unless overwrite=false (throws 409)
-   * - Auto-detects caption type after extraction and persists to meta
+   * - On new dataset: auto-detects caption type, creates DB metadata record
+   * - On existing dataset: ensures DB record exists (upserts defaults)
    */
   async uploadZip(
     name: string,
@@ -198,89 +227,28 @@ export class DatasetsService {
     const isNew = !fsSync.existsSync(datasetPath);
     await fs.mkdir(datasetPath, { recursive: true });
 
-    const skippedFiles: string[] = [];
-    let extractedFiles = 0;
-
-    const directory = await unzipper.Open.buffer(zipBuffer);
-
-    // Detect single top-level folder and strip it
-    const topLevelDirs = new Set<string>();
-    for (const entry of directory.files) {
-      if (entry.type === 'Directory') continue;
-      const parts = entry.path.split('/');
-      if (parts.length > 1) topLevelDirs.add(parts[0]);
-    }
-    const stripPrefix =
-      topLevelDirs.size === 1 ? [...topLevelDirs][0] + '/' : null;
-
-    for (const entry of directory.files) {
-      if (entry.type === 'Directory') continue;
-
-      if (
-        entry.path.includes('__MACOSX') ||
-        entry.path.includes('.DS_Store') ||
-        path.basename(entry.path).startsWith('.')
-      ) {
-        continue;
-      }
-
-      let relativePath = entry.path;
-      if (stripPrefix && relativePath.startsWith(stripPrefix)) {
-        relativePath = relativePath.slice(stripPrefix.length);
-      }
-
-      // Only keep files directly in root of the flattened structure
-      // (no subdirectory support — sd-scripts reads a flat dir)
-      if (relativePath.includes('/')) {
-        skippedFiles.push(entry.path);
-        continue;
-      }
-
-      const basename = path.basename(relativePath);
-      if (!isImage(basename) && !isCaption(basename)) {
-        skippedFiles.push(basename);
-        continue;
-      }
-
-      const destPath = path.join(datasetPath, basename);
-      const readStream = entry.stream() as unknown as Readable;
-      const writeStream = fsSync.createWriteStream(destPath);
-      await pipeline(readStream, writeStream);
-      extractedFiles++;
-    }
+    const { imageCount, captionCount, skippedFiles } =
+      await this.extractZipBuffer(zipBuffer, datasetPath);
 
     this.logger.log(
-      `Dataset "${name}": extracted ${extractedFiles} files, skipped ${skippedFiles.length}`,
+      `Dataset "${name}": extracted ${imageCount} images + ${captionCount} captions from zip, skipped ${skippedFiles.length}`,
     );
 
-    // Auto-detect caption type and initialise meta for new datasets
-    if (isNew) {
-      const detected = await this.detectCaptionTypeFromDir(
-        await fs.readdir(datasetPath),
-        datasetPath,
-      );
-      const existing = await this.readMeta(datasetPath);
-      await this.writeMeta(datasetPath, {
-        ...(existing ?? this.defaultMeta()),
-        captionType: detected.captionType,
-      });
-    }
-
-    const detail = await this.getOne(name);
+    await this.upsertMetaAfterUpload(name, datasetPath, isNew);
 
     return {
       name,
       path: datasetPath,
-      extractedFiles,
-      imageCount: detail.imageCount,
-      captionCount: detail.captionedCount,
+      extractedFiles: imageCount + captionCount,
+      imageCount,
+      captionCount,
       skippedFiles,
     };
   }
 
   /**
    * Upload individual image/caption files (multipart) to a dataset.
-   * Creates the dataset directory if it doesn't exist.
+   * Creates the dataset directory and DB metadata record if they don't exist.
    */
   async uploadFiles(
     name: string,
@@ -288,10 +256,13 @@ export class DatasetsService {
   ): Promise<UploadResult> {
     this.validateName(name);
     const datasetPath = this.datasetPath(name);
+
+    const isNew = !fsSync.existsSync(datasetPath);
     await fs.mkdir(datasetPath, { recursive: true });
 
     const skippedFiles: string[] = [];
-    let extractedFiles = 0;
+    let imageCount = 0;
+    let captionCount = 0;
 
     for (const file of files) {
       const originalName = file.originalname;
@@ -301,28 +272,30 @@ export class DatasetsService {
       }
       const destPath = path.join(datasetPath, path.basename(originalName));
       await fs.writeFile(destPath, file.buffer);
-      extractedFiles++;
+
+      if (isImage(originalName)) imageCount++;
+      else captionCount++;
     }
 
     this.logger.log(
-      `Dataset "${name}": saved ${extractedFiles} files via multipart, skipped ${skippedFiles.length}`,
+      `Dataset "${name}": saved ${imageCount} images + ${captionCount} captions via multipart, skipped ${skippedFiles.length}`,
     );
 
-    const detail = await this.getOne(name);
+    await this.upsertMetaAfterUpload(name, datasetPath, isNew);
 
     return {
       name,
       path: datasetPath,
-      extractedFiles,
-      imageCount: detail.imageCount,
-      captionCount: detail.captionedCount,
+      extractedFiles: imageCount + captionCount,
+      imageCount,
+      captionCount,
       skippedFiles,
     };
   }
 
   /**
-   * Replace a single image in the dataset.
-   * Caption is preserved. Extension of incoming file must match target filename.
+   * Replace a single image in the dataset. Caption is preserved.
+   * The extension of the incoming file must match the target filename.
    */
   async replaceImage(
     name: string,
@@ -360,7 +333,7 @@ export class DatasetsService {
 
   /**
    * Read the caption text for a given image.
-   * Returns { caption: string, captionStats } or { caption: null, captionStats: null }.
+   * Returns { caption, captionStats } or { caption: null, captionStats: null }.
    * Never throws 404 for a missing caption — absence is a valid state.
    */
   async getCaption(
@@ -467,7 +440,7 @@ export class DatasetsService {
     mode: PrependMode,
     skipExisting: boolean,
   ): Promise<PrependTokenResult> {
-    if (!token || !token.trim()) {
+    if (!token?.trim()) {
       throw new BadRequestException('Activation token must not be empty');
     }
 
@@ -518,31 +491,46 @@ export class DatasetsService {
   // METADATA
   // ══════════════════════════════════════════════════════════════════════════
 
-  /** Read dataset.meta.json. Returns null if absent. */
+  /**
+   * Read the DB metadata record for a dataset.
+   * Returns null if no record has been created yet (e.g. manually placed dataset).
+   * Throws NotFoundException if the dataset directory does not exist.
+   */
   async getMeta(name: string): Promise<DatasetMeta | null> {
-    const datasetPath = this.datasetPath(name);
-    await this.assertExists(name, datasetPath);
-    return this.readMeta(datasetPath);
-  }
-
-  /** Merge-update dataset.meta.json. Creates it if absent. */
-  async updateMeta(
-    name: string,
-    update: DatasetMetaUpdate,
-  ): Promise<DatasetMeta> {
-    const datasetPath = this.datasetPath(name);
-    await this.assertExists(name, datasetPath);
-
-    const existing = (await this.readMeta(datasetPath)) ?? this.defaultMeta();
-    const updated: DatasetMeta = { ...existing, ...update };
-    await this.writeMeta(datasetPath, updated);
-
-    return updated;
+    await this.assertExists(name, this.datasetPath(name));
+    return this.findMetaByName(name);
   }
 
   /**
-   * Analyse caption files to determine their style.
-   * Persists result into dataset.meta.json and returns detection details.
+   * Merge-update the DB metadata record.
+   * Creates a new record with defaults if one doesn't exist yet.
+   * Throws NotFoundException if the dataset directory does not exist.
+   */
+  async updateMeta(name: string, update: DatasetMetaUpdate): Promise<DatasetMeta> {
+    await this.assertExists(name, this.datasetPath(name));
+
+    const existing = await this.metaRepo.findOne({ where: { name } });
+
+    if (existing) {
+      // Strip undefined values so Object.assign doesn't overwrite with undefined
+      const cleanUpdate = Object.fromEntries(
+        Object.entries(update).filter(([, v]) => v !== undefined),
+      );
+      Object.assign(existing, cleanUpdate);
+      const saved = await this.metaRepo.save(existing);
+      return this.entityToMeta(saved);
+    }
+
+    // No record yet — create one seeded with the update
+    const created = this.metaRepo.create({ name, ...update } as DeepPartial<DatasetMetadata>);
+    const saved = await this.metaRepo.save(created);
+    this.logger.log(`Created metadata record for dataset "${name}"`);
+    return this.entityToMeta(saved);
+  }
+
+  /**
+   * Sample caption files to determine their style, persist the result to DB,
+   * and return detection stats alongside the updated metadata.
    */
   async detectCaptionType(name: string): Promise<CaptionTypeDetectionResult> {
     const datasetPath = this.datasetPath(name);
@@ -551,11 +539,8 @@ export class DatasetsService {
     const files = await fs.readdir(datasetPath);
     const result = await this.detectCaptionTypeFromDir(files, datasetPath);
 
-    const existing = (await this.readMeta(datasetPath)) ?? this.defaultMeta();
-    const meta = await this.writeMeta(datasetPath, {
-      ...existing,
-      captionType: result.captionType,
-    });
+    // Persist detected type — updateMeta handles upsert
+    const meta = await this.updateMeta(name, { captionType: result.captionType });
 
     return { ...result, meta };
   }
@@ -566,7 +551,8 @@ export class DatasetsService {
 
   /**
    * Stream the dataset directory as a zip archive to the provided Response.
-   * Includes images, captions and dataset.meta.json. No temp file needed.
+   * Includes images, captions and the DB metadata serialised as meta.json.
+   * No temp file is created — streams directly.
    */
   async exportZip(name: string, res: import('express').Response): Promise<void> {
     const datasetPath = this.datasetPath(name);
@@ -579,6 +565,12 @@ export class DatasetsService {
 
     archive.pipe(res);
     archive.directory(datasetPath, false);
+
+    // Append DB metadata as a JSON sidecar so exports are self-describing
+    const meta = await this.findMetaByName(name);
+    if (meta) {
+      archive.append(JSON.stringify(meta, null, 2), { name: 'dataset.meta.json' });
+    }
 
     await archive.finalize();
     this.logger.log(`Exported dataset "${name}" as zip`);
@@ -626,7 +618,7 @@ export class DatasetsService {
       await fs.unlink(captionPath);
       captionDeleted = true;
     } catch {
-      // Not an error if absent
+      // No companion caption — not an error
     }
 
     this.logger.debug(`Deleted image "${safeFilename}" from dataset "${name}"`);
@@ -634,8 +626,8 @@ export class DatasetsService {
   }
 
   /**
-   * Delete a dataset directory and all its contents.
-   * Throws NotFoundException if it doesn't exist.
+   * Delete the entire dataset directory and its DB metadata record.
+   * Throws NotFoundException if the directory doesn't exist.
    */
   async remove(name: string): Promise<{ deleted: boolean }> {
     const datasetPath = this.datasetPath(name);
@@ -644,7 +636,98 @@ export class DatasetsService {
     await fs.rm(datasetPath, { recursive: true, force: true });
     this.logger.log(`Deleted dataset "${name}" at ${datasetPath}`);
 
+    // Best-effort DB cleanup — don't throw if the record was never created
+    try {
+      await this.metaRepo.delete({ name });
+      this.logger.debug(`Removed metadata record for dataset "${name}"`);
+    } catch (err) {
+      this.logger.warn(`Could not remove metadata for "${name}": ${err}`);
+    }
+
     return { deleted: true };
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // CHUNKED UPLOAD
+  // ══════════════════════════════════════════════════════════════════════════
+
+  async initChunkedUpload(): Promise<{ uploadId: string }> {
+    const uploadId = randomUUID();
+    await fs.mkdir(this.chunkTempDir(uploadId), { recursive: true });
+    this.logger.debug(`Chunked upload session created: ${uploadId}`);
+    return { uploadId };
+  }
+
+  async saveChunk(
+    uploadId: string,
+    chunkIndex: number,
+    buffer: Buffer,
+  ): Promise<{ uploadId: string; chunkIndex: number }> {
+    const tempDir = this.chunkTempDir(uploadId);
+
+    try {
+      await fs.access(tempDir);
+    } catch {
+      throw new BadRequestException(
+        `Upload session "${uploadId}" not found. Call /upload/chunked/init first.`,
+      );
+    }
+
+    const chunkFilename = `chunk-${String(chunkIndex).padStart(8, '0')}`;
+    await fs.writeFile(path.join(tempDir, chunkFilename), buffer);
+    this.logger.debug(`Chunk ${chunkIndex} saved for session ${uploadId}`);
+
+    return { uploadId, chunkIndex };
+  }
+
+  async completeChunkedUpload(
+    uploadId: string,
+    name: string,
+    totalChunks: number,
+    overwrite = true,
+  ): Promise<UploadResult> {
+    const tempDir = this.chunkTempDir(uploadId);
+
+    try {
+      await fs.access(tempDir);
+    } catch {
+      throw new BadRequestException(
+        `Upload session "${uploadId}" not found or already completed.`,
+      );
+    }
+
+    const assembledPath = path.join(tempDir, 'assembled.zip');
+    const writeStream = fsSync.createWriteStream(assembledPath);
+
+    for (let i = 0; i < totalChunks; i++) {
+      const chunkPath = path.join(tempDir, `chunk-${String(i).padStart(8, '0')}`);
+      let chunkBuffer: Buffer;
+      try {
+        chunkBuffer = await fs.readFile(chunkPath);
+      } catch {
+        writeStream.destroy();
+        await fs.rm(tempDir, { recursive: true, force: true }).catch(() => {});
+        throw new BadRequestException(
+          `Chunk ${i}/${totalChunks} missing from session "${uploadId}". Upload may be incomplete.`,
+        );
+      }
+      writeStream.write(chunkBuffer);
+    }
+
+    await new Promise<void>((resolve, reject) => {
+      writeStream.end();
+      writeStream.on('finish', resolve);
+      writeStream.on('error', (err) => reject(err as Error));
+    });
+
+    let result: UploadResult;
+    try {
+      result = await this.extractZipFile(name, assembledPath, overwrite);
+    } finally {
+      await fs.rm(tempDir, { recursive: true, force: true }).catch(() => {});
+    }
+
+    return result;
   }
 
   // ══════════════════════════════════════════════════════════════════════════
@@ -653,6 +736,10 @@ export class DatasetsService {
 
   private datasetPath(name: string): string {
     return path.join(this.paths.datasets, name);
+  }
+
+  private chunkTempDir(uploadId: string): string {
+    return path.join(os.tmpdir(), 'gendojo-uploads', uploadId);
   }
 
   private async ensureDatasetsRoot(): Promise<void> {
@@ -677,67 +764,227 @@ export class DatasetsService {
     name: string,
     fullPath: string,
     mtime: Date,
+    meta: DatasetMeta | null,
   ): Promise<DatasetSummary> {
     let files: string[] = [];
     try {
       files = await fs.readdir(fullPath);
     } catch {
-      /* unreadable dir */
+      /* unreadable dir — return zero counts */
     }
 
     const imageFiles = files.filter(isImage);
-    const captionStems = new Set(files.filter(isCaption).map(f => stem(f)));
-    const captionedCount = imageFiles.filter(f => captionStems.has(stem(f))).length;
-    const meta = await this.readMeta(fullPath);
+    const captionStems = new Set(files.filter(isCaption).map((f) => stem(f)));
+    const captionedCount = imageFiles.filter((f) => captionStems.has(stem(f))).length;
 
     return {
       name,
       path: fullPath,
       imageCount: imageFiles.length,
       captionedCount,
-      captionCoverage:
-        imageFiles.length > 0 ? captionedCount / imageFiles.length : 0,
+      captionCoverage: imageFiles.length > 0 ? captionedCount / imageFiles.length : 0,
       updatedAt: mtime.toISOString(),
       meta,
     };
   }
 
-  // ══════════════════════════════════════════════════════════════════════════
-  // PRIVATE — meta helpers
-  // ══════════════════════════════════════════════════════════════════════════
-
-  private metaPath(datasetPath: string): string {
-    return path.join(datasetPath, META_FILENAME);
+  /**
+   * Extract zip buffer into datasetPath.
+   * Strips one level of nesting when the archive contains a single top-level folder.
+   * Returns per-type file counts and skipped entries.
+   */
+  private async extractZipBuffer(
+    zipBuffer: Buffer,
+    datasetPath: string,
+  ): Promise<{ imageCount: number; captionCount: number; skippedFiles: string[] }> {
+    const directory = await unzipper.Open.buffer(zipBuffer);
+    return this.extractEntries(directory.files, datasetPath);
   }
 
-  private defaultMeta(): DatasetMeta {
+  private async extractZipFile(
+    name: string,
+    zipPath: string,
+    overwrite = true,
+  ): Promise<UploadResult> {
+    this.validateName(name);
+    const datasetPath = this.datasetPath(name);
+
+    if (!overwrite && fsSync.existsSync(datasetPath)) {
+      throw new ConflictException(
+        `Dataset "${name}" already exists. Pass overwrite=true to merge.`,
+      );
+    }
+
+    const isNew = !fsSync.existsSync(datasetPath);
+    await fs.mkdir(datasetPath, { recursive: true });
+
+    const directory = await unzipper.Open.file(zipPath);
+    const { imageCount, captionCount, skippedFiles } = await this.extractEntries(
+      directory.files,
+      datasetPath,
+    );
+
+    this.logger.log(
+      `Dataset "${name}": extracted ${imageCount} images + ${captionCount} captions from file, skipped ${skippedFiles.length}`,
+    );
+
+    await this.upsertMetaAfterUpload(name, datasetPath, isNew);
+
     return {
-      activationToken: null,
-      captionType: 'unknown',
-      notes: '',
-      createdAt: new Date().toISOString(),
+      name,
+      path: datasetPath,
+      extractedFiles: imageCount + captionCount,
+      imageCount,
+      captionCount,
+      skippedFiles,
     };
   }
 
-  private async readMeta(datasetPath: string): Promise<DatasetMeta | null> {
+  /**
+   * Shared extraction logic for both buffer and file-based zip operations.
+   * Strips one level of nesting when the archive has a single top-level folder.
+   */
+  private async extractEntries(
+    entries: unzipper.File[],
+    destDir: string,
+  ): Promise<{ imageCount: number; captionCount: number; skippedFiles: string[] }> {
+    const skippedFiles: string[] = [];
+    let imageCount = 0;
+    let captionCount = 0;
+
+    // Detect single top-level folder → strip prefix for automatic flattening
+    const topLevelDirs = new Set<string>();
+    for (const entry of entries) {
+      if (entry.type === 'Directory') continue;
+      const parts = entry.path.split('/');
+      if (parts.length > 1) topLevelDirs.add(parts[0]);
+    }
+    const stripPrefix = topLevelDirs.size === 1 ? [...topLevelDirs][0] + '/' : null;
+
+    for (const entry of entries) {
+      if (entry.type === 'Directory') continue;
+
+      // Skip macOS and hidden junk
+      if (
+        entry.path.includes('__MACOSX') ||
+        entry.path.includes('.DS_Store') ||
+        path.basename(entry.path).startsWith('.')
+      ) {
+        continue;
+      }
+
+      let relativePath = entry.path;
+      if (stripPrefix && relativePath.startsWith(stripPrefix)) {
+        relativePath = relativePath.slice(stripPrefix.length);
+      }
+
+      // Skip files still nested after prefix stripping
+      if (relativePath.includes('/')) {
+        skippedFiles.push(entry.path);
+        continue;
+      }
+
+      const basename = path.basename(relativePath);
+      if (!isImage(basename) && !isCaption(basename)) {
+        skippedFiles.push(basename);
+        continue;
+      }
+
+      const destPath = path.join(destDir, basename);
+      const readStream = entry.stream() as unknown as Readable;
+      const writeStream = fsSync.createWriteStream(destPath);
+      await pipeline(readStream, writeStream);
+
+      if (isImage(basename)) imageCount++;
+      else captionCount++;
+    }
+
+    return { imageCount, captionCount, skippedFiles };
+  }
+
+  private validateName(name: string): void {
+    if (!name || !/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(name)) {
+      throw new BadRequestException(
+        `Invalid dataset name "${name}". Use only letters, numbers, hyphens, underscores.`,
+      );
+    }
+    if (name.includes('..') || name.includes('/') || name.includes('\\')) {
+      throw new BadRequestException('Dataset name must not contain path separators');
+    }
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // PRIVATE — DB helpers
+  // ══════════════════════════════════════════════════════════════════════════
+
+  /**
+   * Load a metadata record by dataset name.
+   * Returns null if not found — never throws.
+   */
+  private async findMetaByName(name: string): Promise<DatasetMeta | null> {
     try {
-      const raw = await fs.readFile(this.metaPath(datasetPath), 'utf8');
-      return JSON.parse(raw) as DatasetMeta;
-    } catch {
+      const record = await this.metaRepo.findOne({ where: { name } });
+      return record ? this.entityToMeta(record) : null;
+    } catch (err) {
+      this.logger.warn(`Could not load metadata for "${name}": ${err}`);
       return null;
     }
   }
 
-  private async writeMeta(
+  /**
+   * After an upload completes:
+   * - New dataset: auto-detect caption type, create DB record with detected type
+   * - Existing dataset: ensure a DB record exists (create defaults if missing)
+   *
+   * Safe to call multiple times — never overwrites user-edited metadata.
+   */
+  private async upsertMetaAfterUpload(
+    name: string,
     datasetPath: string,
-    meta: DatasetMeta,
-  ): Promise<DatasetMeta> {
-    await fs.writeFile(
-      this.metaPath(datasetPath),
-      JSON.stringify(meta, null, 2),
-      'utf8',
-    );
-    return meta;
+    isNew: boolean,
+  ): Promise<void> {
+    if (isNew) {
+      const files = await fs.readdir(datasetPath);
+      const detection = await this.detectCaptionTypeFromDir(files, datasetPath);
+      const record = this.metaRepo.create({
+        name,
+        captionType: detection.captionType,
+        has_captions: detection.sampleSize > 0,
+      });
+      await this.metaRepo.save(record);
+      this.logger.debug(
+        `Created metadata for new dataset "${name}" (captionType: ${detection.captionType})`,
+      );
+    } else {
+      // Ensure a record exists for pre-existing datasets without one
+      const existing = await this.metaRepo.findOne({ where: { name } });
+      if (!existing) {
+        const record = this.metaRepo.create({ name });
+        await this.metaRepo.save(record);
+        this.logger.debug(`Created default metadata record for existing dataset "${name}"`);
+      }
+    }
+  }
+
+  /**
+   * Map a DatasetMetadata entity to the plain DatasetMeta interface.
+   * Serialises Date columns to ISO strings.
+   */
+  private entityToMeta(entity: DatasetMetadata): DatasetMeta {
+    return {
+      description:       entity.description ?? null,
+      activationToken:   entity.activationToken ?? null,
+      captionType:       entity.captionType,
+      type:              entity.type,
+      resolution:        entity.resolution,
+      keep_tokens_count: entity.keep_tokens_count,
+      has_captions:      entity.has_captions,
+      notes:             entity.notes ?? null,
+      tagFrequency:      entity.tagFrequency,
+      total_file_size:   entity.total_file_size,
+      createdAt:         entity.created_at.toISOString(),
+      updatedAt:         entity.updated_at.toISOString(),
+    };
   }
 
   // ══════════════════════════════════════════════════════════════════════════
@@ -761,24 +1008,22 @@ export class DatasetsService {
     };
   }
 
-  private computeCaptionLengthSummary(
-    stats: CaptionStats[],
-  ): CaptionLengthSummary {
+  private computeCaptionLengthSummary(stats: CaptionStats[]): CaptionLengthSummary {
     const count = stats.length;
     const totalChars = stats.reduce((s, c) => s + c.charCount, 0);
     const totalWords = stats.reduce((s, c) => s + c.wordCount, 0);
 
     return {
-      longForClipCount: stats.filter(c => c.isLongForClip).length,
-      longForT5Count: stats.filter(c => c.isLongForT5).length,
-      avgCharCount: Math.round(totalChars / count),
-      avgWordCount: Math.round(totalWords / count),
+      longForClipCount: stats.filter((c) => c.isLongForClip).length,
+      longForT5Count:   stats.filter((c) => c.isLongForT5).length,
+      avgCharCount:     Math.round(totalChars / count),
+      avgWordCount:     Math.round(totalWords / count),
     };
   }
 
   /**
    * Sample up to DETECTION_SAMPLE_SIZE caption files and classify each.
-   * Returns aggregate stats without persisting to meta.
+   * Returns aggregate stats without writing to DB.
    */
   private async detectCaptionTypeFromDir(
     files: string[],
@@ -796,7 +1041,6 @@ export class DatasetsService {
       .slice(0, DETECTION_SAMPLE_SIZE);
 
     let tagListCount = 0;
-
     for (const file of sample) {
       const text = await fs
         .readFile(path.join(datasetPath, file), 'utf8')
@@ -819,9 +1063,8 @@ export class DatasetsService {
   }
 
   /**
-   * Heuristic: a caption looks like a tag list if it has ≥ 2 commas and
-   * avg token length < 25 chars. Natural language captions have long clauses
-   * and sentence-ending punctuation.
+   * Heuristic: a caption looks like a tag list when it has ≥ 2 commas,
+   * short average token length (< 25 chars), and few sentence-ending marks.
    */
   private looksLikeTagList(text: string): boolean {
     const trimmed = text.trim();
@@ -830,7 +1073,7 @@ export class DatasetsService {
     const commaCount = (trimmed.match(/,/g) ?? []).length;
     if (commaCount < 2) return false;
 
-    const tokens = trimmed.split(',').map(t => t.trim()).filter(Boolean);
+    const tokens = trimmed.split(',').map((t) => t.trim()).filter(Boolean);
     const avgLen = tokens.reduce((sum, t) => sum + t.length, 0) / tokens.length;
     const sentenceEndings = (trimmed.match(/[.!?]/g) ?? []).length;
 
@@ -852,34 +1095,13 @@ export class DatasetsService {
       case 'nl_prefix':
         return existing ? `${token}. ${existing}` : token;
       case 'nl_style':
-        return existing
-          ? `In style of ${token}, ${existing}`
-          : `In style of ${token}`;
+        return existing ? `In style of ${token}, ${existing}` : `In style of ${token}`;
       case 'nl_character':
-        return existing
-          ? `${token} character, ${existing}`
-          : `${token} character`;
+        return existing ? `${token} character, ${existing}` : `${token} character`;
       default: {
-        const _exhaustive: never = mode;
+        //const _exhaustive: never = mode;
         return existing;
       }
-    }
-  }
-
-  // ══════════════════════════════════════════════════════════════════════════
-  // PRIVATE — validation
-  // ══════════════════════════════════════════════════════════════════════════
-
-  private validateName(name: string): void {
-    if (!name || !/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(name)) {
-      throw new BadRequestException(
-        `Invalid dataset name "${name}". Use only letters, numbers, hyphens, underscores.`,
-      );
-    }
-    if (name.includes('..') || name.includes('/') || name.includes('\\')) {
-      throw new BadRequestException(
-        `Dataset name must not contain path separators`,
-      );
     }
   }
 }

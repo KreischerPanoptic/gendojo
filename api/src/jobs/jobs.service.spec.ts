@@ -5,7 +5,7 @@ import { PathsConfig } from '../config/paths.config';
 import { TomlService } from '../toml/toml.service';
 import { DatasetsService } from '../datasets/datasets.service';
 import { NotFoundException } from '@nestjs/common';
-import type { CreateJobDto } from './types/jobs.types';
+import { CreateJobDto } from './dto/create-job.dto';
 
 // ─── Mocks ────────────────────────────────────────────────────────────────────
 
@@ -282,7 +282,7 @@ describe('JobsService', () => {
 
     it('returns detail with logBuffer', async () => {
       const created = await service.create(makeRefDto());
-      const found = service.getById(created.id);
+      const found = await service.getById(created.id);
       expect(Array.isArray(found!.logBuffer)).toBe(true);
     });
   });

@@ -6,7 +6,7 @@ import {
 } from '@nestjs/common';
 import { DatasetsService } from './datasets.service';
 import { PathsConfig } from '../config/paths.config';
-import { CAPTION_LENGTH_THRESHOLDS } from './types/dataset-info.types';
+import { CAPTION_LENGTH_THRESHOLDS } from './types/datasets.types';
 
 // ─── Mocks ────────────────────────────────────────────────────────────────────
 

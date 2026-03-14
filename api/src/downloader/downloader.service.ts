@@ -11,18 +11,16 @@ import * as fs from 'fs';
 import * as fsp from 'fs/promises';
 import * as path from 'path';
 import { randomUUID } from 'crypto';
+
 import { PathsConfig } from '../config/paths.config';
 import { ModelsService } from '../models/models.service';
 import { ARCH_ROLE_DIR } from '../models/entities/models.constants';
 import type { ModelArchitecture, ModelRole } from '../models/entities/models.types';
-import {
-  DownloadJob,
-  DownloadSource,
-  StartDownloadDto,
-} from './entities/downloader.types';
+import type { DownloadJob, DownloadSource } from './types/downloader.types';
+import { StartDownloadDto } from './dto/start-download.dto';
 import { findPreset, getPresetsByArch } from './presets/download.presets';
-import type { ModelPreset } from './entities/downloader.types';
-import { TokensService } from 'src/tokens/tokens.service';
+import type { ModelPreset } from './types/downloader.types';
+import { TokensService } from 'src/settings/tokens/tokens.service';
 
 const HF_BASE = 'https://huggingface.co';
 
@@ -30,7 +28,7 @@ const HF_BASE = 'https://huggingface.co';
 export class DownloaderService implements OnModuleInit {
   private readonly logger = new Logger(DownloaderService.name);
 
-  /** All jobs since process start — never purged (ring-buffer not needed here) */
+  /** All jobs since process start — never purged */
   private readonly jobs = new Map<string, DownloadJob>();
 
   /** AbortControllers keyed by job id — for in-flight downloads only */
@@ -39,21 +37,19 @@ export class DownloaderService implements OnModuleInit {
   constructor(
     private readonly paths: PathsConfig,
     private readonly modelsService: ModelsService,
-    private readonly tokensService: TokensService
+    private readonly tokensService: TokensService,
   ) {}
 
   async onModuleInit(): Promise<void> {
-    // Nothing to restore — downloads are fire-and-forget; partial files cleaned up.
+    // Downloads are fire-and-forget; partial files are cleaned up on failure.
   }
 
   // ── Public API ─────────────────────────────────────────────────────────────
 
-  /** Return preset list, optionally filtered by arch */
   listPresets(arch?: string) {
     return getPresetsByArch(arch);
   }
 
-  /** Return all tracked download jobs */
   listJobs(): DownloadJob[] {
     return [...this.jobs.values()].sort(
       (a, b) => b.createdAt.getTime() - a.createdAt.getTime(),
@@ -66,12 +62,43 @@ export class DownloaderService implements OnModuleInit {
     return job;
   }
 
-  /** Start a new download. Returns the job immediately; download runs in background. */
+  /**
+   * Start a new download job.
+   *
+   * Returns the job immediately; download runs in the background.
+   * If the target file already exists at the resolved destination,
+   * the job is returned with status='skipped' and no download is performed.
+   */
   async start(dto: StartDownloadDto): Promise<DownloadJob> {
     const resolved = this.resolveDownload(dto);
-    const destination = this.resolveDestination(resolved.arch, resolved.role, resolved.filename);
+    const destination = this.resolveDestination(resolved);
 
     await fsp.mkdir(path.dirname(destination), { recursive: true });
+
+    // ── Skip if file already on disk ─────────────────────────────────────────
+    if (fs.existsSync(destination)) {
+      const skippedJob: DownloadJob = {
+        id: randomUUID(),
+        source: resolved.source,
+        url: resolved.url,
+        arch: resolved.arch,
+        role: resolved.role,
+        filename: resolved.filename,
+        destination,
+        status: 'skipped',
+        bytesDownloaded: 0,
+        bytesTotal: 0,
+        progressPercent: 100,
+        alreadyExisted: true,
+        createdAt: new Date(),
+        completedAt: new Date(),
+      };
+      this.jobs.set(skippedJob.id, skippedJob);
+      this.logger.log(
+        `Skipped [${skippedJob.id}] — file already exists: ${destination}`,
+      );
+      return skippedJob;
+    }
 
     const job: DownloadJob = {
       id: randomUUID(),
@@ -85,14 +112,15 @@ export class DownloaderService implements OnModuleInit {
       bytesDownloaded: 0,
       bytesTotal: 0,
       progressPercent: 0,
+      alreadyExisted: false,
       createdAt: new Date(),
     };
 
     this.jobs.set(job.id, job);
     this.logger.log(`Download queued [${job.id}] → ${destination}`);
 
-    // Fire-and-forget — client polls for status
-    this.runDownload(job).catch(err => {
+    // Fire-and-forget — client polls GET /downloader/:id for progress
+    this.runDownload(job).catch((err) => {
       this.logger.error(`Download failed [${job.id}]: ${(err as Error).message}`);
     });
 
@@ -103,10 +131,12 @@ export class DownloaderService implements OnModuleInit {
   cancel(id: string): DownloadJob {
     const job = this.getJob(id);
 
-    if (job.status === 'completed' || job.status === 'failed') {
-      throw new BadRequestException(
-        `Cannot cancel a ${job.status} download.`,
-      );
+    if (
+      job.status === 'completed' ||
+      job.status === 'failed' ||
+      job.status === 'skipped'
+    ) {
+      throw new BadRequestException(`Cannot cancel a ${job.status} download.`);
     }
 
     this.aborts.get(id)?.abort();
@@ -123,18 +153,20 @@ export class DownloaderService implements OnModuleInit {
     role: ModelRole;
     filename: string;
     source: DownloadSource;
+    preset?: ModelPreset;
   } {
     if (dto.presetId) {
       const preset = findPreset(dto.presetId);
       if (!preset) {
-        throw new BadRequestException(`Unknown preset: ${dto.presetId}`);
+        throw new BadRequestException(`Unknown preset: "${dto.presetId}"`);
       }
       return {
-        url: this.buildUrl(preset),
+        url: this.buildPresetUrl(preset),
         arch: preset.arch,
         role: preset.role,
         filename: preset.filename,
         source: preset.source,
+        preset,
       };
     }
 
@@ -144,22 +176,43 @@ export class DownloaderService implements OnModuleInit {
       );
     }
 
-    const filename = dto.filename ?? this.filenameFromUrl(dto.url);
-    const source = this.detectSource(dto.url);
-
     return {
       url: dto.url,
       arch: dto.arch,
       role: dto.role,
-      filename,
-      source,
+      filename: dto.filename ?? this.filenameFromUrl(dto.url),
+      source: this.detectSource(dto.url),
     };
   }
 
-  private buildUrl(preset: ModelPreset): string {
+  /**
+   * Resolve the absolute destination path.
+   *
+   * Priority:
+   *   1. `preset.sharedDestination` — overrides everything; saves to
+   *      models/<sharedDestination> regardless of arch+role.
+   *   2. ARCH_ROLE_DIR mapping — normal arch+role → subdirectory lookup.
+   *   3. Fallback — models/<arch>/<filename>.
+   */
+  private resolveDestination(resolved: {
+    arch: ModelArchitecture;
+    role: ModelRole;
+    filename: string;
+    preset?: ModelPreset;
+  }): string {
+    if (resolved.preset?.sharedDestination) {
+      return path.join(this.paths.models, resolved.preset.sharedDestination);
+    }
+
+    const dirMap = ARCH_ROLE_DIR[resolved.arch] ?? {};
+    const subdir = dirMap[resolved.role] ?? resolved.arch;
+    return path.join(this.paths.models, subdir, resolved.filename);
+  }
+
+  private buildPresetUrl(preset: ModelPreset): string {
     if (preset.source === 'huggingface' && preset.hfRepoId && preset.hfFilename) {
-      const url = `${HF_BASE}/${preset.hfRepoId}/resolve/main/${preset.hfFilename}`;
-      return url; // token goes in the Authorization header, not the URL for HF
+      // HF token goes in the Authorization header, not the URL
+      return `${HF_BASE}/${preset.hfRepoId}/resolve/main/${preset.hfFilename}`;
     }
     if (preset.directUrl) {
       return preset.directUrl;
@@ -177,27 +230,10 @@ export class DownloaderService implements OnModuleInit {
 
   private filenameFromUrl(url: string): string {
     try {
-      const u = new URL(url);
-      return path.basename(u.pathname) || 'model.safetensors';
+      return path.basename(new URL(url).pathname) || 'model.safetensors';
     } catch {
       return 'model.safetensors';
     }
-  }
-
-  /**
-   * Determine where to save the file based on arch + role.
-   *
-   * Uses ARCH_ROLE_DIR from models.constants (no ModelsService import needed).
-   * Falls back to <arch>/ if the role is not mapped.
-   */
-  private resolveDestination(
-    arch: ModelArchitecture,
-    role: ModelRole,
-    filename: string,
-  ): string {
-    const dirMap = ARCH_ROLE_DIR[arch] ?? {};
-    const subdir = dirMap[role] ?? arch;
-    return path.join(this.paths.models, subdir, filename);
   }
 
   // ── Download execution ─────────────────────────────────────────────────────
@@ -217,16 +253,17 @@ export class DownloaderService implements OnModuleInit {
       });
 
       this.logger.log(
-        `Download complete [${job.id}] ${job.filename} (${(job.bytesDownloaded / 1024 / 1024).toFixed(1)} MB)`,
+        `Download complete [${job.id}] ${job.filename} ` +
+          `(${(job.bytesDownloaded / 1024 / 1024).toFixed(1)} MB)`,
       );
 
-      // Trigger models rescan so the new file appears immediately
+      // Trigger model rescan so the new file appears in GET /models immediately
       await this.modelsService.refresh();
     } catch (err) {
       const msg = (err as Error).message ?? String(err);
 
       if (msg === 'CANCELLED') {
-        // cancel() already patched status
+        // cancel() already patched the status
         return;
       }
 
@@ -236,7 +273,7 @@ export class DownloaderService implements OnModuleInit {
         completedAt: new Date(),
       });
 
-      // Remove partial file on failure
+      // Clean up partial file on failure
       await fsp.unlink(job.destination).catch(() => null);
     } finally {
       this.aborts.delete(job.id);
@@ -245,21 +282,15 @@ export class DownloaderService implements OnModuleInit {
 
   /**
    * Stream a URL to disk, following up to 10 redirects.
-   * Authorization header is added for HuggingFace downloads when HF_TOKEN is set.
+   * HuggingFace and CivitAI tokens are sent in the Authorization header.
+   * CDN redirect responses intentionally drop the auth header.
    */
-  private fetchToFile(
-    job: DownloadJob,
-    signal: AbortSignal,
-  ): Promise<void> {
+  private fetchToFile(job: DownloadJob, signal: AbortSignal): Promise<void> {
     return new Promise<void>((resolve, reject) => {
-      if (signal.aborted) {
-        return reject(new Error('CANCELLED'));
-      }
+      if (signal.aborted) return reject(new Error('CANCELLED'));
 
       const hfToken = this.tokensService.getToken('hfToken');
       const civitaiToken = this.tokensService.getToken('civitaiToken');
-
-      const maxRedirects = 10;
 
       const follow = (url: string, redirectsLeft: number): void => {
         let parsed: URL;
@@ -269,8 +300,7 @@ export class DownloaderService implements OnModuleInit {
           return reject(new Error(`Invalid URL: ${url}`));
         }
 
-        const isHttps = parsed.protocol === 'https:';
-        const transport = isHttps ? https : http;
+        const transport = parsed.protocol === 'https:' ? https : http;
 
         const headers: Record<string, string> = {
           'User-Agent': 'GenDojo/1.0 (model downloader)',
@@ -279,24 +309,20 @@ export class DownloaderService implements OnModuleInit {
         if (job.source === 'huggingface' && hfToken) {
           headers['Authorization'] = `Bearer ${hfToken}`;
         }
-
-        if(job.source === 'civitai' && civitaiToken) {
+        if (job.source === 'civitai' && civitaiToken) {
           headers['Authorization'] = `Bearer ${civitaiToken}`;
         }
 
         const req = transport.get(url, { headers }, (res) => {
-          // Follow redirects
+          // Follow redirects (auth header intentionally dropped on CDN hops)
           if (
             res.statusCode !== undefined &&
             res.statusCode >= 300 &&
             res.statusCode < 400 &&
             res.headers.location
           ) {
-            res.resume(); // drain and discard
-            if (redirectsLeft === 0) {
-              return reject(new Error('Too many redirects'));
-            }
-            // HF CDN redirects lose auth header — that's intentional
+            res.resume();
+            if (redirectsLeft === 0) return reject(new Error('Too many redirects'));
             follow(res.headers.location, redirectsLeft - 1);
             return;
           }
@@ -305,7 +331,7 @@ export class DownloaderService implements OnModuleInit {
             res.resume();
             return reject(
               new Error(
-                `HTTP ${res.statusCode}: Access denied. ${job.source === 'huggingface' ? 'Set HF_TOKEN and accept the model license.' : ''}`,
+                `HTTP ${res.statusCode}: Access denied.${job.source === 'huggingface' ? ' Set HF_TOKEN and accept the model license on HuggingFace.' : ''}`,
               ),
             );
           }
@@ -320,7 +346,6 @@ export class DownloaderService implements OnModuleInit {
 
           const fileStream = fs.createWriteStream(job.destination);
 
-          // Handle cancellation mid-stream
           const onAbort = () => {
             req.destroy();
             res.destroy();
@@ -333,10 +358,7 @@ export class DownloaderService implements OnModuleInit {
           res.on('data', (chunk: Buffer) => {
             const downloaded = job.bytesDownloaded + chunk.length;
             const percent = total > 0 ? Math.floor((downloaded / total) * 100) : -1;
-            this.patch(job, {
-              bytesDownloaded: downloaded,
-              progressPercent: percent,
-            });
+            this.patch(job, { bytesDownloaded: downloaded, progressPercent: percent });
           });
 
           res.pipe(fileStream);
@@ -345,12 +367,10 @@ export class DownloaderService implements OnModuleInit {
             signal.removeEventListener('abort', onAbort);
             resolve();
           });
-
           fileStream.once('error', (err) => {
             signal.removeEventListener('abort', onAbort);
             reject(err);
           });
-
           res.once('error', (err) => {
             signal.removeEventListener('abort', onAbort);
             reject(err);
@@ -360,13 +380,13 @@ export class DownloaderService implements OnModuleInit {
         req.once('error', reject);
       };
 
-      follow(job.url, maxRedirects);
+      follow(job.url, 10);
     });
   }
 
   // ── Utils ──────────────────────────────────────────────────────────────────
 
-  /** Mutate job in-place; Map entry reflects the change immediately */
+  /** Mutate job in-place — Map entry reflects the change immediately */
   private patch(job: DownloadJob, partial: Partial<DownloadJob>): void {
     Object.assign(job, partial);
   }

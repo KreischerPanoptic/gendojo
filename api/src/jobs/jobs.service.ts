@@ -25,9 +25,9 @@ import {
 } from './types/jobs.types';
 import { Job } from './entities/job.entity';
 import { CreateJobDto } from './dto/create-job.dto';
-import { JobDetailDto } from './dto/job-details.dto';
-import { JobSummaryDto } from './dto/job-summary.dto';
 import { JobLogEvent, JobStatusEvent } from './events/jobs.events';
+import { JobDetailResponseDto } from './dto/job-detail.dto';
+import { JobSummaryResponseDto } from './dto/job-summary.dto';
 
 // Matches: steps:  10%|███       | 2775/27750 [05:15<45:22,  1.42it/s, avr_loss=0.0979]
 const TQDM_REGEX = /steps:\s+(\d+)%\|.*\|\s+(\d+)\/(\d+)\s+\[([^<]+)<([^,]+),\s+([0-9.]+(?:it\/s|s\/it)),\s+avr_loss=([0-9.]+)\]/;
@@ -61,7 +61,7 @@ export class JobsService extends EventEmitter implements OnModuleInit, OnModuleD
       { status: In([JobStatus.Pending, JobStatus.Running]) },
       { status: JobStatus.Failed, finishedAt: new Date() }
     );
-    
+
     if (result.affected && result.affected > 0) {
       this.logger.log(`Marked ${result.affected} orphaned jobs as Failed`);
     }
@@ -69,14 +69,14 @@ export class JobsService extends EventEmitter implements OnModuleInit, OnModuleD
 
   async onModuleDestroy(): Promise<void> {
     this.logger.log('Destroying module — sending SIGTERM to running processes');
-    for (const [jobId, proc] of this.processes) {
+    for (const [_, proc] of this.processes) {
       if (proc.pid) process.kill(-proc.pid, 'SIGTERM');
     }
   }
 
   // ── Public API ─────────────────────────────────────────────────────────────
 
-  async create(dto: CreateJobDto): Promise<JobDetailDto> {
+  async create(dto: CreateJobDto): Promise<JobDetailResponseDto> {
     const { datasetDto, datasetName } = await this.resolveDataset(dto);
 
     // Limit check via DB
@@ -88,19 +88,19 @@ export class JobsService extends EventEmitter implements OnModuleInit, OnModuleD
     const jobId = randomUUID();
     const jobDir = this.paths.jobDir(jobId);
     const datasetTomlPath = path.join(jobDir, 'dataset.toml');
-    const trainTomlPath   = path.join(jobDir, 'train.toml');
-    const logFilePath     = path.join(jobDir, 'train.log');
+    const trainTomlPath = path.join(jobDir, 'train.toml');
+    const logFilePath = path.join(jobDir, 'train.log');
 
     // Resolve output_dir
-    const outputName  = dto.train.output_name || 'untitled';
-    const isoDate     = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19); 
-    const outputDir   = (dto.train.output_dir as string | undefined)
+    const outputName = dto.train.output_name || 'untitled';
+    const isoDate = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+    const outputDir = (dto.train.output_dir as string | undefined)
       ?? path.join(this.paths.outputs, outputName, `${jobId}-${isoDate}`);
 
     // Build enriched train DTO
     let trainDto: Record<string, unknown> = {
       ...dto.train,
-      output_dir:     outputDir,
+      output_dir: outputDir,
       dataset_config: datasetTomlPath,
     };
 
@@ -140,21 +140,21 @@ export class JobsService extends EventEmitter implements OnModuleInit, OnModuleD
       this.logger.log(`Job ${jobId}: prompts.txt → ${samplePromptsPath}`);
     }
 
-    const script     = this.toml.getTrainScript(dto.train.arch);
+    const script = this.toml.getTrainScript(dto.train.arch);
     const scriptPath = path.join(this.paths.sdScripts, script);
 
     const datasetTomlContent = this.toml.generateDatasetToml(datasetDto);
-    const trainTomlContent   = this.toml.generateTrainToml(
+    const trainTomlContent = this.toml.generateTrainToml(
       trainDto as unknown as Parameters<typeof this.toml.generateTrainToml>[0],
     );
 
     await fs.writeFile(datasetTomlPath, datasetTomlContent, 'utf8');
-    await fs.writeFile(trainTomlPath,   trainTomlContent,   'utf8');
+    await fs.writeFile(trainTomlPath, trainTomlContent, 'utf8');
 
     const command = [
       'accelerate', 'launch',
       '--config_file', this.paths.accelerateConfig,
-      '--num_cpu_threads_per_process',  (this.settings.getTraining().cpuThreadsPerProcess ?? 1),
+      '--num_cpu_threads_per_process', (this.settings.getTraining().cpuThreadsPerProcess ?? 1),
       scriptPath,
       '--config_file', trainTomlPath,
     ].join(' ');
@@ -177,19 +177,21 @@ export class JobsService extends EventEmitter implements OnModuleInit, OnModuleD
     });
 
     await this.jobsRepo.save(job);
-    
+
     // Initialize empty log buffer for WebSockets
     this.liveLogs.set(job.id, []);
 
-    this.launch(job); 
+    this.launch(job).catch(err =>
+      this.logger.error(`Failed to launch job ${job.id}: ${(err as Error).message}`)
+    );
     return { ...job, logBuffer: [] };
   }
 
-  async list(): Promise<JobSummaryDto[]> {
+  async list(): Promise<JobSummaryResponseDto[]> {
     return this.jobsRepo.find({ order: { createdAt: 'DESC' } });
   }
 
-  async getById(id: string): Promise<JobDetailDto | null> {
+  async getById(id: string): Promise<JobDetailResponseDto | null> {
     const job = await this.jobsRepo.findOneBy({ id });
     if (!job) return null;
 
@@ -197,8 +199,8 @@ export class JobsService extends EventEmitter implements OnModuleInit, OnModuleD
     return { ...job, logBuffer };
   }
 
-  getLogs(id: string): LogLine[] | undefined {
-    return this.liveLogs.get(id);
+  getLogs(id: string): LogLine[] {
+    return this.liveLogs.get(id) ?? [];
   }
 
   async kill(id: string): Promise<boolean> {
@@ -208,16 +210,15 @@ export class JobsService extends EventEmitter implements OnModuleInit, OnModuleD
     const proc = this.processes.get(id);
     if (!proc || proc.pid === undefined) return false;
 
-    job.status     = JobStatus.Killed;
-    job.finishedAt = new Date();
-    this.emit('job:status', { jobId: id, status: JobStatus.Killed } as JobStatusEvent);
-    await this.jobsRepo.save(job);
-
     const pgid = proc.pid;
     this.logger.log(`Killing job ${id} (PID ${pgid}, process group -${pgid})`);
 
     try {
       process.kill(-pgid, 'SIGTERM');
+      job.status = JobStatus.Killed;
+      job.finishedAt = new Date();
+      this.emit('job:status', { jobId: id, status: JobStatus.Killed } as JobStatusEvent);
+      await this.jobsRepo.save(job);
     } catch (err) {
       this.logger.warn(`SIGTERM to process group -${pgid} failed: ${(err as Error).message}`);
       return false;
@@ -252,12 +253,12 @@ export class JobsService extends EventEmitter implements OnModuleInit, OnModuleD
       }
       parts.push(promptText);
 
-      if (p.seed      !== undefined) parts.push(`--d ${p.seed}`);
-      if (p.width     !== undefined) parts.push(`--w ${p.width}`);
-      if (p.height    !== undefined) parts.push(`--h ${p.height}`);
-      if (p.steps     !== undefined) parts.push(`--s ${p.steps}`);
-      if (p.cfg       !== undefined) parts.push(`--c ${p.cfg}`);
-      if (p.negativePrompt)          parts.push(`--n ${p.negativePrompt}`);
+      if (p.seed !== undefined) parts.push(`--d ${p.seed}`);
+      if (p.width !== undefined) parts.push(`--w ${p.width}`);
+      if (p.height !== undefined) parts.push(`--h ${p.height}`);
+      if (p.steps !== undefined) parts.push(`--s ${p.steps}`);
+      if (p.cfg !== undefined) parts.push(`--c ${p.cfg}`);
+      if (p.negativePrompt) parts.push(`--n ${p.negativePrompt}`);
 
       return parts.join(' ');
     });
@@ -324,11 +325,11 @@ export class JobsService extends EventEmitter implements OnModuleInit, OnModuleD
     opts: DatasetRefOptions,
   ): DatasetTomlDto {
     const {
-      resolution     = 1024,
-      enable_bucket  = true,
+      resolution = 1024,
+      enable_bucket = true,
       min_bucket_reso,
       max_bucket_reso,
-      batch_size     = 1,
+      batch_size = 1,
       num_repeats,
       shuffle_caption,
       keep_tokens,
@@ -348,12 +349,12 @@ export class JobsService extends EventEmitter implements OnModuleInit, OnModuleD
           subsets: [
             {
               image_dir: imageDir,
-              ...(num_repeats      !== undefined && { num_repeats }),
-              ...(shuffle_caption  !== undefined && { shuffle_caption }),
-              ...(keep_tokens      !== undefined && { keep_tokens }),
+              ...(num_repeats !== undefined && { num_repeats }),
+              ...(shuffle_caption !== undefined && { shuffle_caption }),
+              ...(keep_tokens !== undefined && { keep_tokens }),
               caption_extension: caption_extension ?? '.txt',
-              ...(class_tokens     !== undefined && { class_tokens }),
-              ...(flip_aug         !== undefined && { flip_aug }),
+              ...(class_tokens !== undefined && { class_tokens }),
+              ...(flip_aug !== undefined && { flip_aug }),
             },
           ],
         },
@@ -381,7 +382,7 @@ export class JobsService extends EventEmitter implements OnModuleInit, OnModuleD
       detached: true,
     });
 
-    job.status    = JobStatus.Running;
+    job.status = JobStatus.Running;
     job.startedAt = new Date();
     this.processes.set(job.id, proc);
 
@@ -426,7 +427,7 @@ export class JobsService extends EventEmitter implements OnModuleInit, OnModuleD
       this.processes.delete(job.id);
 
       const exitCode = code ?? (signal ? 1 : 0);
-      job.exitCode   = exitCode;
+      job.exitCode = exitCode;
       job.finishedAt = new Date();
 
       // Extract final stats from transient memory before cleaning up
@@ -451,7 +452,7 @@ export class JobsService extends EventEmitter implements OnModuleInit, OnModuleD
 
     proc.on('error', async (err: Error) => {
       this.processes.delete(job.id);
-      job.status     = JobStatus.Failed;
+      job.status = JobStatus.Failed;
       job.finishedAt = new Date();
       this.liveProgress.delete(job.id);
 
@@ -489,10 +490,10 @@ export class JobsService extends EventEmitter implements OnModuleInit, OnModuleD
     if (buffer.length > (this.settings.getTraining().logBufferSize ?? 200)) {
       buffer.shift();
     }
-    
+
     // 2. Write to disk
     logStream.write(`[${new Date(entry.ts).toISOString()}] [${entry.stream}] ${entry.text}\n`);
-    
+
     // 3. Broadcast standard log event
     this.emit('job:log', { jobId: job.id, line: entry });
 
@@ -501,13 +502,13 @@ export class JobsService extends EventEmitter implements OnModuleInit, OnModuleD
       const match = entry.text.match(TQDM_REGEX);
       if (match) {
         const progress: JobProgress = {
-          percent:    parseInt(match[1], 10),
-          step:       parseInt(match[2], 10),
+          percent: parseInt(match[1], 10),
+          step: parseInt(match[2], 10),
           totalSteps: parseInt(match[3], 10),
-          elapsed:    match[4],
-          eta:        match[5],
-          speed:      match[6],
-          avrLoss:    parseFloat(match[7]),
+          elapsed: match[4],
+          eta: match[5],
+          speed: match[6],
+          avrLoss: parseFloat(match[7]),
         };
 
         // Update transient state

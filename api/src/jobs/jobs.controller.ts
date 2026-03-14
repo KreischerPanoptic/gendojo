@@ -24,12 +24,10 @@ import {
 
 import { JobsService } from './jobs.service';
 import type { CreateJobDto } from './dto/create-job.dto';
-import {
-  JobSummaryResponseDto,
-  JobDetailResponseDto,
-  KillJobResponseDto,
-  JobLogsResponseDto,
-} from './dto/job-response.dto';
+import { JobDetailResponseDto } from './dto/job-detail.dto';
+import { JobSummaryResponseDto } from './dto/job-summary.dto';
+import { JobLogsResponseDto } from './dto/job-logs.dto';
+import { KillJobResponseDto } from './dto/kill-job.dto';
 
 /**
  * REST API for training jobs.
@@ -45,7 +43,7 @@ import {
 @ApiExtraModels(JobDetailResponseDto, JobSummaryResponseDto)
 @Controller('jobs')
 export class JobsController {
-  constructor(private readonly jobsService: JobsService) {}
+  constructor(private readonly jobsService: JobsService) { }
 
   // ── Create ─────────────────────────────────────────────────────────────────
 
@@ -83,17 +81,17 @@ export class JobsController {
                 'Optional overrides for the auto-generated dataset.toml when using datasetRef. ' +
                 'Controls resolution, bucketing, repeats, etc.',
               properties: {
-                resolution:        { oneOf: [{ type: 'integer' }, { type: 'array', items: { type: 'integer' }, minItems: 2, maxItems: 2 }], example: 1024 },
-                enable_bucket:     { type: 'boolean', example: true },
-                min_bucket_reso:   { type: 'integer', example: 256 },
-                max_bucket_reso:   { type: 'integer', example: 2048 },
-                batch_size:        { type: 'integer', example: 1 },
-                num_repeats:       { type: 'integer', example: 10 },
-                shuffle_caption:   { type: 'boolean', example: false },
-                keep_tokens:       { type: 'integer', example: 1 },
+                resolution: { oneOf: [{ type: 'integer' }, { type: 'array', items: { type: 'integer' }, minItems: 2, maxItems: 2 }], example: 1024 },
+                enable_bucket: { type: 'boolean', example: true },
+                min_bucket_reso: { type: 'integer', example: 256 },
+                max_bucket_reso: { type: 'integer', example: 2048 },
+                batch_size: { type: 'integer', example: 1 },
+                num_repeats: { type: 'integer', example: 10 },
+                shuffle_caption: { type: 'boolean', example: false },
+                keep_tokens: { type: 'integer', example: 1 },
                 caption_extension: { type: 'string', example: '.txt' },
-                class_tokens:      { type: 'string', example: 'person' },
-                flip_aug:          { type: 'boolean', example: false },
+                class_tokens: { type: 'string', example: 'person' },
+                flip_aug: { type: 'boolean', example: false },
               },
             },
             sampleImages: { $ref: '#/components/schemas/SampleImagesConfig' },
@@ -104,8 +102,8 @@ export class JobsController {
           description: 'Provide a full inline dataset.toml definition',
           required: ['train', 'dataset'],
           properties: {
-            train:        { $ref: '#/components/schemas/TrainTomlDto' },
-            dataset:      { $ref: '#/components/schemas/DatasetTomlDto' },
+            train: { $ref: '#/components/schemas/TrainTomlDto' },
+            dataset: { $ref: '#/components/schemas/DatasetTomlDto' },
             sampleImages: { $ref: '#/components/schemas/SampleImagesConfig' },
           },
         },
@@ -126,17 +124,17 @@ export class JobsController {
     description: 'Train config validation failed. Body contains field-level errors.',
     schema: {
       properties: {
-        message:    { type: 'string', example: 'Train config validation failed' },
+        message: { type: 'string', example: 'Train config validation failed' },
         validation: {
           type: 'object',
           properties: {
-            valid:  { type: 'boolean', example: false },
+            valid: { type: 'boolean', example: false },
             errors: {
               type: 'array',
               items: {
                 type: 'object',
                 properties: {
-                  field:   { type: 'string', example: 'learning_rate' },
+                  field: { type: 'string', example: 'learning_rate' },
                   message: { type: 'string', example: 'must be a positive number' },
                 },
               },
@@ -217,8 +215,7 @@ export class JobsController {
   @ApiResponse({ status: 404, description: 'Job not found' })
   getLogs(@Param('id') id: string): JobLogsResponseDto {
     const logs = this.jobsService.getLogs(id);
-    if (!logs) throw new NotFoundException(`Job not found: ${id}`);
-    return { logs };
+    return { logs: logs ?? [] };
   }
 
   // ── Kill ───────────────────────────────────────────────────────────────────

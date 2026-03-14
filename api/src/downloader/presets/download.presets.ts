@@ -1,4 +1,4 @@
-import type { ModelPreset } from '../entities/downloader.types';
+import type { ModelPreset } from '../types/downloader.types';
 
 /**
  * Built-in presets for common base models used with kohya-ss/sd-scripts.
@@ -6,15 +6,54 @@ import type { ModelPreset } from '../entities/downloader.types';
  * HuggingFace download URL pattern:
  *   https://huggingface.co/{hfRepoId}/resolve/main/{hfFilename}
  *
- * Models marked requiresHfToken:true are gated — the user must have accepted
- * the license on HuggingFace and set HF_TOKEN in the environment.
+ * ── Shared files ─────────────────────────────────────────────────────────────
  *
- * Shared components across architectures:
- *   CLIP-L / T5-XXL  — comfyanonymous/flux_text_encoders (no token, used by FLUX + SD3 + Chroma)
- *   ae.safetensors   — FLUX AE == Lumina AE (same file, different download destinations)
+ * Several files are physically identical across architectures. Presets for
+ * these files carry a `sharedDestination` field. All presets with the same
+ * `sharedDestination` save to the same path under `models/`:
  *
- * ARCH_ROLE_DIR in models.constants.ts maps Chroma's ae/t5xxl to flux/ subdirs,
- * so Chroma-tagged AE/T5 presets physically save alongside FLUX files — correct by design.
+ *   shared/ae/ae.safetensors
+ *     └─ FLUX.1 AE  ≡  Chroma AE  ≡  Lumina Image 2.0 AE  (same weights)
+ *
+ *   shared/text_encoders/clip_l.safetensors
+ *     └─ FLUX CLIP-L  ≡  SD3/SD3.5 CLIP-L
+ *
+ *   shared/text_encoders/t5xxl_fp16.safetensors
+ *     └─ FLUX T5-XXL fp16  ≡  Chroma T5-XXL fp16  ≡  SD3 T5-XXL fp16
+ *
+ *   shared/text_encoders/t5xxl_fp8_e4m3fn.safetensors
+ *     └─ FLUX T5-XXL fp8  ≡  Chroma T5-XXL fp8  ≡  SD3 T5-XXL fp8
+ *
+ *   shared/vae/vae-ft-mse-840000-ema-pruned.safetensors
+ *     └─ SD 1.x VAE ft-MSE  ≡  SD 2.x VAE ft-MSE  (same file, different repos)
+ *
+ * Arch-specific presets that map to a shared file still appear in the list so
+ * the UI can show "you need this component for Chroma / SD3 / etc." — but the
+ * DownloaderService will skip the download if the file already exists at the
+ * shared destination, regardless of which preset triggered it.
+ *
+ * ── Directory layout ─────────────────────────────────────────────────────────
+ *
+ *   models/
+ *   ├── shared/
+ *   │   ├── ae/              ← FLUX / Chroma / Lumina AE
+ *   │   └── text_encoders/   ← CLIP-L, T5-XXL (fp16 + fp8), shared by FLUX/Chroma/SD3
+ *   ├── flux/
+ *   │   └── dit/             ← FLUX.1-dev, FLUX.1-schnell DiT only
+ *   ├── chroma/
+ *   │   └── dit/             ← Chroma DiT checkpoints
+ *   ├── sdxl/                ← SDXL checkpoint + VAE
+ *   ├── sd1/                 ← SD 1.x checkpoint
+ *   ├── sd2/                 ← SD 2.x checkpoint
+ *   ├── sd3/
+ *   │   ├── dit/             ← SD3/SD3.5 single-file checkpoints
+ *   │   ├── text_encoders/   ← CLIP-G (SD3-specific, NOT shared)
+ *   │   └── vae/             ← SD3 VAE if split
+ *   ├── lumina/
+ *   │   ├── dit/             ← Lumina DiT
+ *   │   └── text_encoders/   ← Gemma2
+ *   ├── hunyuan/             ← HunyuanImage 2.1 DiT, Qwen2.5-VL, byT5, VAE
+ *   └── anima/               ← Anima DiT, Qwen-Image VAE, Qwen3 text encoder
  */
 export const MODEL_PRESETS: ModelPreset[] = [
 
@@ -48,58 +87,74 @@ export const MODEL_PRESETS: ModelPreset[] = [
   },
   {
     id: 'flux-ae',
-    name: 'FLUX.1 AE (AutoEncoder)',
+    name: 'FLUX / Chroma / Lumina AE (shared)',
     arch: 'flux',
     role: 'ae',
     source: 'huggingface',
     hfRepoId: 'black-forest-labs/FLUX.1-dev',
     hfFilename: 'ae.safetensors',
     filename: 'ae.safetensors',
+    sharedDestination: 'shared/ae/ae.safetensors',
     sizeMb: 335,
     requiresHfToken: true,
-    description: 'FLUX AutoEncoder. Shared by FLUX.1-dev and FLUX.1-schnell. Gated — set HF_TOKEN.',
+    description:
+      'FLUX AutoEncoder. Physically identical to the Chroma AE and Lumina 2.0 AE — ' +
+      'saved once to models/shared/ae/. Gated — set HF_TOKEN.',
   },
   {
     id: 'flux-clip-l',
-    name: 'CLIP-L (FLUX / SD3 / Chroma shared)',
+    name: 'CLIP-L (FLUX / SD3 shared)',
     arch: 'flux',
     role: 'clip_l',
     source: 'huggingface',
     hfRepoId: 'comfyanonymous/flux_text_encoders',
     hfFilename: 'clip_l.safetensors',
     filename: 'clip_l.safetensors',
+    sharedDestination: 'shared/text_encoders/clip_l.safetensors',
     sizeMb: 246,
     requiresHfToken: false,
-    description: 'CLIP-L text encoder. No token required. Shared by FLUX.1 and SD3/SD3.5 (Chroma does not use CLIP-L).',
+    description:
+      'CLIP-L text encoder. Shared by FLUX.1 and SD3/SD3.5 — saved once to ' +
+      'models/shared/text_encoders/. No token required. Chroma does not use CLIP-L.',
   },
   {
     id: 'flux-t5xxl-fp16',
-    name: 'T5-XXL fp16 (FLUX / SD3 / Chroma shared)',
+    name: 'T5-XXL fp16 (FLUX / Chroma / SD3 shared)',
     arch: 'flux',
     role: 't5xxl',
     source: 'huggingface',
     hfRepoId: 'comfyanonymous/flux_text_encoders',
     hfFilename: 't5xxl_fp16.safetensors',
     filename: 't5xxl_fp16.safetensors',
+    sharedDestination: 'shared/text_encoders/t5xxl_fp16.safetensors',
     sizeMb: 9_800,
     requiresHfToken: false,
-    description: 'T5-XXL fp16. No token required. Shared by FLUX.1, Chroma, and SD3/SD3.5. Full quality, ~9.8 GB.',
+    description:
+      'T5-XXL fp16. Shared by FLUX.1, Chroma, and SD3/SD3.5 — saved once to ' +
+      'models/shared/text_encoders/. No token required. ~9.8 GB.',
   },
   {
     id: 'flux-t5xxl-fp8',
-    name: 'T5-XXL fp8 (FLUX / SD3 / Chroma shared, quantized)',
+    name: 'T5-XXL fp8 (FLUX / Chroma / SD3 shared, quantized)',
     arch: 'flux',
     role: 't5xxl',
     source: 'huggingface',
     hfRepoId: 'comfyanonymous/flux_text_encoders',
     hfFilename: 't5xxl_fp8_e4m3fn.safetensors',
     filename: 't5xxl_fp8_e4m3fn.safetensors',
+    sharedDestination: 'shared/text_encoders/t5xxl_fp8_e4m3fn.safetensors',
     sizeMb: 4_900,
     requiresHfToken: false,
-    description: 'T5-XXL fp8 (e4m3fn). No token required. Shared by FLUX.1, Chroma, and SD3/SD3.5. ~4.9 GB, recommended for <12 GB VRAM.',
+    description:
+      'T5-XXL fp8 (e4m3fn). Shared by FLUX.1, Chroma, and SD3/SD3.5 — saved once to ' +
+      'models/shared/text_encoders/. ~4.9 GB, recommended for <12 GB VRAM.',
   },
 
-  // ── Chroma (FLUX variant — CLIP-L not needed, AE and T5-XXL same as FLUX) ─
+  // ── Chroma ────────────────────────────────────────────────────────────────
+  //
+  // DiT checkpoints go to models/chroma/dit/ (own arch directory).
+  // AE and T5-XXL are identical to FLUX equivalents → sharedDestination.
+  // Chroma does NOT use CLIP-L.
 
   {
     id: 'chroma-dit',
@@ -112,7 +167,9 @@ export const MODEL_PRESETS: ModelPreset[] = [
     filename: 'chroma-unlocked-v50.safetensors',
     sizeMb: 23_800,
     requiresHfToken: false,
-    description: 'Chroma — FLUX.1 variant trained without CFG (guidance_scale=0). No CLIP-L. Requires AE + T5-XXL (use chroma-ae / chroma-t5xxl presets below).',
+    description:
+      'Chroma — FLUX.1 variant trained without CFG (guidance_scale=0). Does not use CLIP-L. ' +
+      'Requires AE (flux-ae) + T5-XXL (flux-t5xxl-fp16 or flux-t5xxl-fp8) from shared presets.',
   },
   {
     id: 'chroma-base-dit',
@@ -125,7 +182,7 @@ export const MODEL_PRESETS: ModelPreset[] = [
     filename: 'Chroma1-Base.safetensors',
     sizeMb: 23_800,
     requiresHfToken: false,
-    description: 'Chroma 1 Base model — official base checkpoint from lodestones/Chroma1-Base.',
+    description: 'Chroma 1 Base checkpoint (lodestones/Chroma1-Base).',
   },
   {
     id: 'chroma-hd-dit',
@@ -138,7 +195,7 @@ export const MODEL_PRESETS: ModelPreset[] = [
     filename: 'Chroma1-HD.safetensors',
     sizeMb: 23_800,
     requiresHfToken: false,
-    description: 'Chroma 1 HD model — official HD checkpoint from lodestones/Chroma1-HD.',
+    description: 'Chroma 1 HD checkpoint (lodestones/Chroma1-HD).',
   },
   {
     id: 'chroma-flash-dit',
@@ -151,46 +208,58 @@ export const MODEL_PRESETS: ModelPreset[] = [
     filename: 'Chroma1-HD-Flash.safetensors',
     sizeMb: 23_800,
     requiresHfToken: false,
-    description: 'Chroma 1 HD Flash model — official flash checkpoint from lodestones/Chroma1-Flash.',
+    description: 'Chroma 1 HD Flash checkpoint (lodestones/Chroma1-Flash).',
   },
+  // AE and T5-XXL for Chroma are arch-tagged presets that resolve to the same
+  // shared destination as the FLUX equivalents. Downloading either the FLUX
+  // preset or the Chroma preset results in the same file at the same path.
   {
     id: 'chroma-ae',
-    name: 'Chroma AE (same as FLUX AE)',
+    name: 'Chroma AE (shared with FLUX / Lumina)',
     arch: 'chroma',
     role: 'ae',
     source: 'huggingface',
     hfRepoId: 'black-forest-labs/FLUX.1-dev',
     hfFilename: 'ae.safetensors',
     filename: 'ae.safetensors',
+    sharedDestination: 'shared/ae/ae.safetensors',
     sizeMb: 335,
     requiresHfToken: true,
-    description: 'AutoEncoder for Chroma — physically identical to FLUX AE. Saved to flux/ae/ (shared dir). Gated — set HF_TOKEN.',
+    description:
+      'AutoEncoder for Chroma. Identical to FLUX AE — resolves to models/shared/ae/ae.safetensors. ' +
+      'Downloading flux-ae or chroma-ae saves the same file. Gated — set HF_TOKEN.',
   },
   {
     id: 'chroma-t5xxl-fp16',
-    name: 'T5-XXL fp16 (Chroma)',
+    name: 'T5-XXL fp16 (Chroma, shared with FLUX / SD3)',
     arch: 'chroma',
     role: 't5xxl',
     source: 'huggingface',
     hfRepoId: 'comfyanonymous/flux_text_encoders',
     hfFilename: 't5xxl_fp16.safetensors',
     filename: 't5xxl_fp16.safetensors',
+    sharedDestination: 'shared/text_encoders/t5xxl_fp16.safetensors',
     sizeMb: 9_800,
     requiresHfToken: false,
-    description: 'T5-XXL fp16 for Chroma. Same file as FLUX T5-XXL — saved to flux/text_encoders/ (shared dir).',
+    description:
+      'T5-XXL fp16 for Chroma. Identical to flux-t5xxl-fp16 — resolves to models/shared/text_encoders/. ' +
+      'Only downloaded once regardless of which arch-tagged preset triggers it.',
   },
   {
     id: 'chroma-t5xxl-fp8',
-    name: 'T5-XXL fp8 (Chroma, quantized)',
+    name: 'T5-XXL fp8 (Chroma, shared, quantized)',
     arch: 'chroma',
     role: 't5xxl',
     source: 'huggingface',
     hfRepoId: 'comfyanonymous/flux_text_encoders',
     hfFilename: 't5xxl_fp8_e4m3fn.safetensors',
     filename: 't5xxl_fp8_e4m3fn.safetensors',
+    sharedDestination: 'shared/text_encoders/t5xxl_fp8_e4m3fn.safetensors',
     sizeMb: 4_900,
     requiresHfToken: false,
-    description: 'T5-XXL fp8 for Chroma. Saved to flux/text_encoders/ (shared dir). Recommended for <12 GB VRAM.',
+    description:
+      'T5-XXL fp8 for Chroma. Identical to flux-t5xxl-fp8 — resolves to models/shared/text_encoders/. ' +
+      'Recommended for <12 GB VRAM.',
   },
 
   // ── SDXL ─────────────────────────────────────────────────────────────────
@@ -239,16 +308,19 @@ export const MODEL_PRESETS: ModelPreset[] = [
   },
   {
     id: 'sd1-vae-ft-mse',
-    name: 'SD 1.x VAE ft-MSE',
+    name: 'SD VAE ft-MSE (SD 1.x / 2.x shared)',
     arch: 'sd1',
     role: 'vae',
     source: 'huggingface',
     hfRepoId: 'stabilityai/sd-vae-ft-mse-original',
     hfFilename: 'vae-ft-mse-840000-ema-pruned.safetensors',
     filename: 'vae-ft-mse-840000-ema-pruned.safetensors',
+    sharedDestination: 'shared/vae/vae-ft-mse-840000-ema-pruned.safetensors',
     sizeMb: 335,
     requiresHfToken: false,
-    description: 'Improved SD 1.x VAE (fine-tuned with MSE loss). Better color and detail rendering than the stock 1.5 VAE.',
+    description:
+      'Improved SD VAE (fine-tuned with MSE loss). Compatible with both SD 1.x and SD 2.x — ' +
+      'saved once to models/shared/vae/. The sd2-vae-ft-mse preset resolves to the same file.',
   },
 
   // ── SD 2.x ────────────────────────────────────────────────────────────────
@@ -268,27 +340,27 @@ export const MODEL_PRESETS: ModelPreset[] = [
   },
   {
     id: 'sd2-vae-ft-mse',
-    name: 'SD 2.x VAE ft-MSE',
+    name: 'SD VAE ft-MSE (SD 2.x / 1.x shared)',
     arch: 'sd2',
     role: 'vae',
     source: 'huggingface',
     hfRepoId: 'stabilityai/sd-vae-ft-mse-original',
     hfFilename: 'vae-ft-mse-840000-ema-pruned.safetensors',
     filename: 'vae-ft-mse-840000-ema-pruned.safetensors',
+    sharedDestination: 'shared/vae/vae-ft-mse-840000-ema-pruned.safetensors',
     sizeMb: 335,
     requiresHfToken: false,
-    description: 'SD VAE fine-tuned with MSE loss. Compatible with both SD 1.x and SD 2.x.',
+    description:
+      'SD VAE ft-MSE for SD 2.x. Identical file to sd1-vae-ft-mse — resolves to ' +
+      'models/shared/vae/. Only downloaded once regardless of which preset triggers it.',
   },
 
   // ── SD 3 / 3.5 ───────────────────────────────────────────────────────────
   //
-  // Both SD3.5 DiT presets are single-file format (.safetensors) — they embed
-  // the VAE and text encoders internally. Pass just --pretrained_model_name_or_path
-  // and sd3_train_network.py will detect components automatically.
-  //
-  // Use the separate encoder presets below only if you want to override
-  // individual components (e.g. different T5-XXL precision) or train with
-  // split files on low-VRAM setups.
+  // Single-file checkpoints embed VAE and text encoders internally.
+  // Pass just --pretrained_model_name_or_path; sd3_train_network.py detects
+  // components automatically. Use the separate encoder presets below only for
+  // split-file setups or to override individual components.
 
   {
     id: 'sd35-large-dit',
@@ -314,7 +386,7 @@ export const MODEL_PRESETS: ModelPreset[] = [
     filename: 'sd3.5_medium.safetensors',
     sizeMb: 5_900,
     requiresHfToken: true,
-    description: 'SD 3.5 Medium (single-file, includes VAE + all text encoders). Good balance of quality and VRAM. Gated — set HF_TOKEN.',
+    description: 'SD 3.5 Medium (single-file, includes VAE + all text encoders). Gated — set HF_TOKEN.',
   },
   {
     id: 'sd3-medium-dit',
@@ -327,12 +399,12 @@ export const MODEL_PRESETS: ModelPreset[] = [
     filename: 'sd3_medium.safetensors',
     sizeMb: 4_340,
     requiresHfToken: true,
-    description: 'SD 3 Medium (single-file, includes VAE + all text encoders). Good balance of quality and VRAM. Gated — set HF_TOKEN.',
+    description: 'SD 3 Medium (single-file, includes VAE + all text encoders). Gated — set HF_TOKEN.',
   },
 
-  // SD3 separate text encoders — for split-file setups or encoder reuse
-  // CLIP-L and T5-XXL: same files as FLUX (comfyanonymous, no token)
-  // CLIP-G: SD3-specific, from stabilityai SD3.5 repo (gated)
+  // SD3 separate text encoders — for split-file setups or encoder overrides.
+  // CLIP-L and T5-XXL: same files as FLUX → sharedDestination.
+  // CLIP-G: SD3-specific (NOT shared with other architectures).
 
   {
     id: 'sd3-clip-l',
@@ -343,13 +415,16 @@ export const MODEL_PRESETS: ModelPreset[] = [
     hfRepoId: 'comfyanonymous/flux_text_encoders',
     hfFilename: 'clip_l.safetensors',
     filename: 'clip_l.safetensors',
+    sharedDestination: 'shared/text_encoders/clip_l.safetensors',
     sizeMb: 246,
     requiresHfToken: false,
-    description: 'CLIP-L for SD3/SD3.5 split-file setup. Same file as FLUX CLIP-L — saved to sd3/text_encoders/.',
+    description:
+      'CLIP-L for SD3/SD3.5 split-file setup. Same file as flux-clip-l — resolves to ' +
+      'models/shared/text_encoders/. No token required.',
   },
   {
     id: 'sd3-clip-g',
-    name: 'CLIP-G (SD3 / SD3.5)',
+    name: 'CLIP-G (SD3 / SD3.5 only)',
     arch: 'sd3',
     role: 'clip_g',
     source: 'huggingface',
@@ -358,40 +433,47 @@ export const MODEL_PRESETS: ModelPreset[] = [
     filename: 'clip_g.safetensors',
     sizeMb: 1_380,
     requiresHfToken: true,
-    description: 'CLIP-G (OpenCLIP ViT-bigG) for SD3/SD3.5. Not used by FLUX. Gated — set HF_TOKEN.',
+    description:
+      'CLIP-G (OpenCLIP ViT-bigG) for SD3/SD3.5 split-file setup. ' +
+      'NOT used by FLUX or Chroma — goes to models/sd3/text_encoders/. Gated — set HF_TOKEN.',
   },
   {
     id: 'sd3-t5xxl-fp16',
-    name: 'T5-XXL fp16 (SD3)',
+    name: 'T5-XXL fp16 (SD3 / FLUX / Chroma shared)',
     arch: 'sd3',
     role: 't5xxl',
     source: 'huggingface',
     hfRepoId: 'comfyanonymous/flux_text_encoders',
     hfFilename: 't5xxl_fp16.safetensors',
     filename: 't5xxl_fp16.safetensors',
+    sharedDestination: 'shared/text_encoders/t5xxl_fp16.safetensors',
     sizeMb: 9_800,
     requiresHfToken: false,
-    description: 'T5-XXL fp16 for SD3/SD3.5 split-file setup. Same file as FLUX T5-XXL — saved to sd3/text_encoders/.',
+    description:
+      'T5-XXL fp16 for SD3/SD3.5 split-file setup. Same file as flux-t5xxl-fp16 — resolves to ' +
+      'models/shared/text_encoders/. No token required.',
   },
   {
     id: 'sd3-t5xxl-fp8',
-    name: 'T5-XXL fp8 (SD3, quantized)',
+    name: 'T5-XXL fp8 (SD3 / FLUX / Chroma shared, quantized)',
     arch: 'sd3',
     role: 't5xxl',
     source: 'huggingface',
     hfRepoId: 'comfyanonymous/flux_text_encoders',
     hfFilename: 't5xxl_fp8_e4m3fn.safetensors',
     filename: 't5xxl_fp8_e4m3fn.safetensors',
+    sharedDestination: 'shared/text_encoders/t5xxl_fp8_e4m3fn.safetensors',
     sizeMb: 4_900,
     requiresHfToken: false,
-    description: 'T5-XXL fp8 for SD3/SD3.5. Saved to sd3/text_encoders/. Recommended for <12 GB VRAM.',
+    description:
+      'T5-XXL fp8 for SD3/SD3.5. Same file as flux-t5xxl-fp8 — resolves to ' +
+      'models/shared/text_encoders/. Recommended for <12 GB VRAM.',
   },
 
   // ── Lumina Image 2.0 ─────────────────────────────────────────────────────
   //
-  // Uses Comfy-Org repack (split files, no gating, bf16 precision).
-  // AE (ae.safetensors) is physically identical to FLUX AE but saved separately
-  // to lumina/ae/ per ARCH_ROLE_DIR convention.
+  // AE is identical to FLUX AE → sharedDestination.
+  // Gemma2 text encoder is Lumina-specific — goes to lumina/text_encoders/.
 
   {
     id: 'lumina2-dit',
@@ -404,11 +486,13 @@ export const MODEL_PRESETS: ModelPreset[] = [
     filename: 'lumina_2_model_bf16.safetensors',
     sizeMb: 4_200,
     requiresHfToken: false,
-    description: 'Lumina Image 2.0 Next-DiT (bf16). Requires Gemma2 text encoder + AE (use lumina2-gemma2 / lumina2-ae presets).',
+    description:
+      'Lumina Image 2.0 Next-DiT (bf16). Requires Gemma2 text encoder (lumina2-gemma2) + ' +
+      'AE (flux-ae or lumina2-ae — same file).',
   },
   {
     id: 'lumina2-gemma2',
-    name: 'Gemma2 2B fp16 (Lumina)',
+    name: 'Gemma2 2B fp16 (Lumina text encoder)',
     arch: 'lumina',
     role: 'gemma2',
     source: 'huggingface',
@@ -421,23 +505,26 @@ export const MODEL_PRESETS: ModelPreset[] = [
   },
   {
     id: 'lumina2-ae',
-    name: 'Lumina Image 2.0 AE',
+    name: 'Lumina Image 2.0 AE (shared with FLUX / Chroma)',
     arch: 'lumina',
     role: 'ae',
     source: 'huggingface',
     hfRepoId: 'Comfy-Org/Lumina_Image_2.0_Repackaged',
     hfFilename: 'split_files/vae/ae.safetensors',
     filename: 'ae.safetensors',
+    sharedDestination: 'shared/ae/ae.safetensors',
     sizeMb: 335,
     requiresHfToken: false,
-    description: 'AutoEncoder for Lumina Image 2.0. Note: identical file to FLUX AE — saved to lumina/ae/ to keep architectures self-contained.',
+    description:
+      'AutoEncoder for Lumina Image 2.0. Identical to FLUX AE — resolves to models/shared/ae/ae.safetensors. ' +
+      'If flux-ae or chroma-ae was already downloaded, this is already present.',
   },
 
   // ── HunyuanImage 2.1 ─────────────────────────────────────────────────────
   //
-  // All supporting models (text encoders + VAE) from Comfy-Org repack.
+  // All components are HunyuanImage-specific — no shared files with other archs.
   // Text encoders: Qwen2.5-VL 7B (--text_encoder) + byT5-small (--byt5).
-  // VAE: HunyuanImage-specific, NOT compatible with SDXL/SD3/FLUX.
+  // VAE: HunyuanImage-specific, NOT compatible with SDXL/SD3/FLUX/AE.
 
   {
     id: 'hunyuan-dit',
@@ -450,7 +537,7 @@ export const MODEL_PRESETS: ModelPreset[] = [
     filename: 'hunyuanimage2.1.safetensors',
     sizeMb: 11_000,
     requiresHfToken: false,
-    description: 'HunyuanImage 2.1 DiT weights. Requires Qwen2.5-VL + byT5 text encoders + HunyuanImage VAE.',
+    description: 'HunyuanImage 2.1 DiT. Requires Qwen2.5-VL + byT5 text encoders + HunyuanImage VAE.',
   },
   {
     id: 'hunyuan-qwen2-5-vl',
@@ -463,7 +550,7 @@ export const MODEL_PRESETS: ModelPreset[] = [
     filename: 'qwen_2.5_vl_7b.safetensors',
     sizeMb: 15_000,
     requiresHfToken: false,
-    description: 'Qwen2.5-VL 7B — primary text encoder for HunyuanImage 2.1. Passed as --text_encoder. ~15 GB.',
+    description: 'Qwen2.5-VL 7B — primary text encoder for HunyuanImage 2.1. ~15 GB.',
   },
   {
     id: 'hunyuan-byt5',
@@ -476,7 +563,7 @@ export const MODEL_PRESETS: ModelPreset[] = [
     filename: 'byt5_small_glyphxl_fp16.safetensors',
     sizeMb: 300,
     requiresHfToken: false,
-    description: 'byT5-small (GlyphXL, fp16) — secondary text encoder for HunyuanImage 2.1. Passed as --byt5.',
+    description: 'byT5-small (GlyphXL, fp16) — secondary text encoder for HunyuanImage 2.1.',
   },
   {
     id: 'hunyuan-vae',
@@ -489,10 +576,11 @@ export const MODEL_PRESETS: ModelPreset[] = [
     filename: 'hunyuan_image_2.1_vae_fp16.safetensors',
     sizeMb: 500,
     requiresHfToken: false,
-    description: 'HunyuanImage 2.1 VAE (fp16). NOT compatible with SDXL, SD3, or FLUX VAE/AE.',
+    description:
+      'HunyuanImage 2.1 VAE (fp16). NOT compatible with SDXL, SD3, FLUX AE, or other architecture VAEs.',
   },
 
-  // ── Anima ────────────────────────────────────────────────────────────────
+  // ── Anima ─────────────────────────────────────────────────────────────────
 
   {
     id: 'anima-dit',
@@ -518,7 +606,7 @@ export const MODEL_PRESETS: ModelPreset[] = [
     filename: 'qwen_image_vae.safetensors',
     sizeMb: 254,
     requiresHfToken: false,
-    description: 'Qwen-Image VAE for Anima. NOT compatible with SDXL or other architectures.',
+    description: 'Qwen-Image VAE for Anima. NOT compatible with SDXL, SD3, FLUX AE, or other architecture VAEs.',
   },
   {
     id: 'anima-qwen3-06b',
@@ -528,19 +616,23 @@ export const MODEL_PRESETS: ModelPreset[] = [
     source: 'huggingface',
     hfRepoId: 'circlestone-labs/Anima',
     hfFilename: 'split_files/text_encoders/qwen_3_06b_base.safetensors',
-    filename: 'qwen3-06b-base/qwen_3_06b_base.safetensors',
+    filename: 'qwen_3_06b_base.safetensors',
     sizeMb: 1_190,
     requiresHfToken: false,
     description: 'Qwen3-0.6B Base — text encoder for Anima. Passed as --qwen3.',
   },
 ];
 
-/** Group presets by architecture for the /downloader/presets endpoint */
+// ─────────────────────────────────────────────────────────────────────────────
+// Helper functions
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Return presets grouped by architecture, or filtered flat array for a specific arch */
 export function getPresetsByArch(
   arch?: string,
 ): ModelPreset[] | Record<string, ModelPreset[]> {
   if (arch) {
-    return MODEL_PRESETS.filter(p => p.arch === arch);
+    return MODEL_PRESETS.filter((p) => p.arch === arch);
   }
 
   return MODEL_PRESETS.reduce<Record<string, ModelPreset[]>>((acc, preset) => {
@@ -549,7 +641,7 @@ export function getPresetsByArch(
   }, {});
 }
 
-/** Look up a single preset by id */
+/** Look up a single preset by its stable id */
 export function findPreset(id: string): ModelPreset | undefined {
-  return MODEL_PRESETS.find(p => p.id === id);
+  return MODEL_PRESETS.find((p) => p.id === id);
 }

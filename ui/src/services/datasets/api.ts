@@ -33,7 +33,6 @@ const getBaseURL = (): string =>
 
 /**
  * Generic XHR upload with optional progress tracking.
- * Used for zip and individual file uploads where we need progress events.
  */
 function xhrUpload<T>(
   method: 'POST' | 'PUT',
@@ -82,6 +81,121 @@ function xhrUpload<T>(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Chunked upload constants
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Файлы >= этого порога уходят через chunked upload */
+const CHUNK_THRESHOLD   = 10 * 1024 * 1024   // 10 MB
+
+/** Размер одного чанка */
+const CHUNK_SIZE        = 5  * 1024 * 1024   // 5 MB
+
+/** Сколько чанков грузим параллельно */
+const CHUNK_CONCURRENCY = 4
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Chunked ZIP upload (internal)
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function uploadZipChunked(
+  name: string,
+  file: File,
+  onProgress?: (event: UploadProgressEvent) => void,
+  overwrite = true,
+): Promise<UploadDatasetResponse> {
+
+  // 1. Инициализируем сессию
+  const token = getToken()
+  const baseURL = getBaseURL()
+
+  const initRes = await fetch(`${baseURL}/datasets/upload/chunked/init`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify({ name }),
+  })
+  if (!initRes.ok) {
+    let msg = `Chunked init failed: HTTP ${initRes.status}`
+    try { const b = await initRes.json() as { message?: string }; if (b.message) msg = b.message } catch {}
+    throw new Error(msg)
+  }
+  const { uploadId } = await initRes.json() as { uploadId: string }
+
+  const totalChunks = Math.ceil(file.size / CHUNK_SIZE)
+
+  // loadedBytes[i] — сколько байт чанка i уже доехало на сервер
+  const loadedBytes = new Array<number>(totalChunks).fill(0)
+
+  const reportProgress = onProgress
+    ? () => {
+        const totalLoaded = loadedBytes.reduce((s, v) => s + v, 0)
+        onProgress({
+          percent: Math.round((totalLoaded / file.size) * 100),
+          loaded: Math.round(totalLoaded),
+          total: file.size,
+        })
+      }
+    : null
+
+  // 2. Грузим чанки батчами по CHUNK_CONCURRENCY параллельно
+  const uploadChunk = (index: number): Promise<void> => {
+    const start = index * CHUNK_SIZE
+    const end = Math.min(start + CHUNK_SIZE, file.size)
+    const chunkBlob = file.slice(start, end)
+    const chunkBytes = end - start
+
+    const formData = new FormData()
+    formData.append('file', new File([chunkBlob], `chunk-${index}`))
+    formData.append('uploadId', uploadId)
+    formData.append('chunkIndex', String(index))
+
+    return xhrUpload<void>(
+      'POST',
+      `${baseURL}/datasets/upload/chunked/chunk`,
+      formData,
+      reportProgress
+        ? (e) => {
+            loadedBytes[index] = (e.loaded / e.total) * chunkBytes
+            reportProgress()
+          }
+        : undefined,
+    )
+  }
+
+  for (let i = 0; i < totalChunks; i += CHUNK_CONCURRENCY) {
+    const batchSize = Math.min(CHUNK_CONCURRENCY, totalChunks - i)
+    await Promise.all(
+      Array.from({ length: batchSize }, (_, k) => uploadChunk(i + k)),
+    )
+  }
+
+  // Репортим 100% на сетевой части перед финализацией сервером
+  onProgress?.({ percent: 100, loaded: file.size, total: file.size })
+
+  // 3. Финализируем — сервер собирает чанки и извлекает ZIP
+  const qs = overwrite ? '' : '?overwrite=false'
+  const token2 = getToken() // токен мог обновиться
+  const completeRes = await fetch(`${baseURL}/datasets/upload/chunked/complete${qs}`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token2 ? { Authorization: `Bearer ${token2}` } : {}),
+    },
+    body: JSON.stringify({ uploadId, name, totalChunks }),
+  })
+
+  if (!completeRes.ok) {
+    let msg = `Chunked complete failed: HTTP ${completeRes.status}`
+    try { const b = await completeRes.json() as { message?: string }; if (b.message) msg = b.message } catch {}
+    throw new Error(msg)
+  }
+
+  return completeRes.json() as Promise<UploadDatasetResponse>
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // API
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -103,12 +217,27 @@ export const datasetsApi = {
 
   // ── Upload ───────────────────────────────────────────────────────────────
 
+  /**
+   * Загрузка ZIP-архива.
+   * Файлы >= CHUNK_THRESHOLD (10 MB) автоматически идут через chunked upload:
+   *   - разбивка на чанки по 5 MB
+   *   - 4 чанка параллельно
+   *   - progress отражает реальный прогресс передачи
+   *
+   * Файлы < 10 MB — одним запросом как раньше.
+   */
   uploadZip: (
     name: string,
     file: File,
     onProgress?: (event: UploadProgressEvent) => void,
     overwrite = true,
   ): Promise<UploadDatasetResponse> => {
+    // Крупные файлы — chunked parallel upload
+    if (file.size >= CHUNK_THRESHOLD) {
+      return uploadZipChunked(name, file, onProgress, overwrite)
+    }
+
+    // Мелкие файлы — простой единый запрос
     const formData = new FormData()
     formData.append('file', file)
     formData.append('name', name)
@@ -158,8 +287,6 @@ export const datasetsApi = {
 
   /**
    * PUT /datasets/:name/images/:filename
-   * Replace an existing image in-place. Caption is preserved.
-   * The uploaded file must share the same extension as the target filename.
    */
   replaceImage: (
     datasetName: string,
@@ -201,10 +328,6 @@ export const datasetsApi = {
     return data
   },
 
-  /**
-   * DELETE /datasets/:name/captions/:image
-   * Idempotent — returns { deleted: false } when caption was already absent.
-   */
   deleteCaption: async (
     datasetName: string,
     imageName: string,
@@ -215,10 +338,6 @@ export const datasetsApi = {
     return data
   },
 
-  /**
-   * POST /datasets/:name/captions/prepend-token
-   * Bulk-prepend activation token to all existing captions.
-   */
   prependToken: async (
     datasetName: string,
     token: string,
@@ -263,10 +382,6 @@ export const datasetsApi = {
 
   // ── Delete ───────────────────────────────────────────────────────────────
 
-  /**
-   * DELETE /datasets/:name/images/:filename
-   * Removes the image and its companion caption file if present.
-   */
   deleteImage: async (
     datasetName: string,
     filename: string,
@@ -283,17 +398,9 @@ export const datasetsApi = {
 
   // ── Utility ──────────────────────────────────────────────────────────────
 
-  /**
-   * Returns the image URL for use in <img src=...>.
-   * The endpoint is @SkipAuth so no token is needed in the URL.
-   */
   getImageUrl: (datasetName: string, filename: string): string =>
     `${getBaseURL()}/datasets/${encodeURIComponent(datasetName)}/images/${encodeURIComponent(filename)}`,
 
-  /**
-   * Returns the export download URL for the dataset zip.
-   * Open via window.open() or an <a href download>.
-   */
   getExportUrl: (datasetName: string): string =>
     `${getBaseURL()}/datasets/${encodeURIComponent(datasetName)}/export`,
 }
