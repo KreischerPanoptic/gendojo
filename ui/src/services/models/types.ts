@@ -1,109 +1,29 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// Mirror of api/src/models/entities/models.types.ts
-// Mirror of api/src/models/entities/models.integrity.types.ts
-// Date fields come as ISO strings over JSON.
+// Types from generated OpenAPI schema
 // ─────────────────────────────────────────────────────────────────────────────
 
-export type ModelArchitecture =
-  | 'sd1'
-  | 'sd2'
-  | 'sdxl'
-  | 'flux'
-  | 'chroma'
-  | 'sd3'
-  | 'anima'
-  | 'lumina'
-  | 'hunyuan'
-  | 'unknown'
+import type { FileIntegrityResultDto, ModelFileDto, ModelsControllerListData } from '@api/types.gen'
 
-export type ModelRole =
-  | 'checkpoint'
-  | 'dit'
-  | 'unet'
-  | 'lora'
-  | 'vae'
-  | 'ae'
-  | 'clip_l'
-  | 'clip_g'
-  | 't5xxl'
-  | 'gemma2'
-  | 'qwen3'
-  | 'qwen2_5_vl'
-  | 'byt5'
-  | 'llm_adapter'
-  | 'text_encoder'
-  | 'unknown'
+export type {
+  ModelFileDto,
+  RefreshResponseDto,
+  DeleteModelResultDto,
+  DeleteArchPreviewDto,
+  DeleteArchResultDto,
+  FileIntegrityResultDto,
+  ArchReadinessResultDto
+} from '@api/types.gen'
 
-export type ModelType = 'checkpoint' | 'lora' | 'vae' | 'text_encoder' | 'unknown'
-
-export interface ModelFile {
-  id: string
-  name: string
-  filename: string
-  relativePath: string
-  absolutePath: string
-  arch: ModelArchitecture
-  role: ModelRole
-  type: ModelType
-  sizeBytes: number
-  sizeMb: number
-  modifiedAt: string
-}
+export type ModelsListParams = ModelsControllerListData['query']
+export type ModelArchitecture = ModelFileDto['arch']
+export type ModelRole = ModelFileDto['role']
+export type ModelType = ModelFileDto['type']
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Integrity types
 // ─────────────────────────────────────────────────────────────────────────────
 
-export type IntegrityStatus = 'ok' | 'corrupted' | 'unknown'
-
-export interface FileIntegrityResult {
-  id: string
-  filename: string
-  status: IntegrityStatus
-  computedSha256: string
-  expectedSha256: string | null
-  sizeMb: number
-  checkedAt: string
-}
-
-export interface RolePresence {
-  role: ModelRole
-  required: boolean
-  present: boolean
-  files: ModelFile[]
-  expectedDir: string
-}
-
-export interface ArchReadinessResult {
-  arch: ModelArchitecture
-  ready: boolean
-  satisfiedVariant: ModelRole[] | null
-  missingRoles: ModelRole[]
-  rolePresence: RolePresence[]
-  checkedAt: string
-}
-
-export interface SharedFileWarning {
-  file: ModelFile
-  sharedWithArches: ModelArchitecture[]
-}
-
-export interface DeleteModelResult {
-  deleted: ModelFile[]
-  sharedWarnings: SharedFileWarning[]
-  deletedCount: number
-}
-
-export interface DeleteArchResult extends DeleteModelResult {
-  arch: ModelArchitecture
-}
-
-export interface DeleteArchPreview {
-  arch: ModelArchitecture
-  toDelete: ModelFile[]
-  sharedWarnings: SharedFileWarning[]
-  totalSizeMb: number
-}
+export type IntegrityStatus = FileIntegrityResultDto['status']
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Display helpers

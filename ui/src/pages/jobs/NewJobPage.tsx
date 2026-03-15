@@ -38,7 +38,7 @@ import type { TrainConfig, SampleImagesConfig, SamplePromptInput } from '@servic
 import { useCreateJob } from '@services/jobs'
 import { useDatasetTomlPreview, useTrainTomlPreview } from '@services/toml'
 import { useDatasets } from '@services/datasets'
-import { useModels, type ModelFile, type ModelRole, type ModelArchitecture, formatSize } from '@services/models'
+import { useModels, type ModelFileDto as ModelFile, type ModelRole, type ModelArchitecture, formatSize } from '@services/models'
 import { usePaths } from '@services/settings'
 import { usePresets, type TrainingPreset, PRESET_TIER_COLOR } from '@services/presets'
 
@@ -870,6 +870,7 @@ export default function NewJobPage() {
       <Box style={{ flex: 1, overflowY: 'auto' }}>
         <Group
           align="start" gap="lg" p="lg"
+          className='flex-col-reverse! md:flex-row!'
           style={{ maxWidth: 1400, margin: '0 auto', flexWrap: 'nowrap' }}
         >
 
@@ -1411,6 +1412,7 @@ export default function NewJobPage() {
 
           {/* ── Right: TOML Preview (sticky) ─────────────────────────────── */}
           <Box
+            className='w-full! md:w-auto'
             style={{
               flex: '0 0 400px', position: 'sticky',
               top: 'var(--mantine-spacing-lg)',

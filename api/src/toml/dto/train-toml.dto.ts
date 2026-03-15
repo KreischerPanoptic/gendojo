@@ -20,7 +20,7 @@
  *          lumina_train_network.md, hunyuan_image_train_network.md
  */
 
-import { AttentionMode, FluxModelPredictionType, FluxTimestepSampling, HuberSchedule, LogWith, LossType, LrScheduler, LuminaTimestepSampling, MixedPrecision, SaveFormat, SavePrecision, Sd3WeightingScheme } from "../entities/train-toml.types";
+import { AttentionMode, FluxModelPredictionType, FluxTimestepSampling, HuberSchedule, LogWith, LossType, LrScheduler, LuminaTimestepSampling, MixedPrecision, SaveFormat, SavePrecision, Sd3WeightingScheme } from "../types/train-toml.types";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Base — common to ALL architectures
@@ -383,6 +383,7 @@ export interface FluxTrainDto extends BaseTrainDto {
    * Requires network_train_unet_only = true.
    */
   cache_text_encoder_outputs?: boolean;
+  /** Cache CLIP-L + T5-XXL encoder outputs to disk (avoids re-encoding on resume). */
   cache_text_encoder_outputs_to_disk?: boolean;
   /**
    * Number of Transformer blocks to swap CPU ↔ GPU.
@@ -425,16 +426,23 @@ export interface ChromaTrainDto extends BaseTrainDto {
    * Recommended: sigmoid for Chroma.
    */
   timestep_sampling?: FluxTimestepSampling;
+  /** Sigmoid scale for sigmoid/shift/flux_shift sampling. Default 1.0. */
   sigmoid_scale?: number;
+  /** What the model predicts. Recommended: raw. Default: sigma_scaled. */
   model_prediction_type?: FluxModelPredictionType;
+  /** Flow matching scheduler shift. Default 3.0. */
   discrete_flow_shift?: number;
   /**
    * Required for Chroma — applies attention masks for T5XXL.
    */
   apply_t5_attn_mask: true;
+  /** Cache T5-XXL encoder outputs in memory (requires network_train_unet_only=true). */
   cache_text_encoder_outputs?: boolean;
+  /** Cache T5-XXL encoder outputs to disk (avoids re-encoding on resume). */
   cache_text_encoder_outputs_to_disk?: boolean;
+  /** CPU ↔ GPU Transformer block swapping. Larger = less VRAM, slower training. */
   blocks_to_swap?: number;
+  /** Max token length for T5-XXL. Default 512. */
   t5xxl_max_token_length?: number;
 }
 
@@ -489,6 +497,7 @@ export interface Sd3TrainDto extends BaseTrainDto {
   mode_scale?: number;
   /** Cache text encoder outputs (highly recommended for SD3's 3 encoders) */
   cache_text_encoder_outputs?: boolean;
+  /** Cache CLIP-L/CLIP-G/T5-XXL outputs to disk (avoids re-encoding on resume). */
   cache_text_encoder_outputs_to_disk?: boolean;
   /** CPU ↔ GPU block swapping */
   blocks_to_swap?: number;
@@ -538,8 +547,9 @@ export interface AnimaTrainDto extends BaseTrainDto {
   vae_chunk_size?: number;
   /** Disable internal VAE cache to reduce VRAM. */
   vae_disable_cache?: boolean;
-  /** Cache text encoder outputs */
+  /** Cache text encoder outputs in memory (requires network_train_unet_only=true). */
   cache_text_encoder_outputs?: boolean;
+  /** Cache text encoder outputs to disk (avoids re-encoding on resume). */
   cache_text_encoder_outputs_to_disk?: boolean;
   /** CPU ↔ GPU block swapping. Max 26 for Anima-Preview (28-block model). */
   blocks_to_swap?: number;
@@ -548,11 +558,20 @@ export interface AnimaTrainDto extends BaseTrainDto {
    * Cannot combine with blocks_to_swap or cpu_offload_checkpointing.
    */
   unsloth_offload_checkpointing?: boolean;
-  // Component-wise LRs — mainly for full fine-tune; for LoRA use network_reg_lrs in network_args
+  /**
+   * Per-component learning rate overrides.
+   * Primarily useful for full fine-tuning; for LoRA use network_reg_lrs in network_args.
+   * All default to the global learning_rate when unset.
+   */
+  /** LR for self-attention layers. */
   self_attn_lr?: number;
+  /** LR for cross-attention layers. */
   cross_attn_lr?: number;
+  /** LR for MLP / feed-forward layers. */
   mlp_lr?: number;
+  /** LR for modulation / adaLN layers. */
   mod_lr?: number;
+  /** LR for the LLM adapter output projection. */
   llm_adapter_lr?: number;
   // fp8_base is NOT supported for Anima
   fp8_base?: never;

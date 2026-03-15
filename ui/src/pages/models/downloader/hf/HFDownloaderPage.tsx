@@ -19,21 +19,22 @@ import {
   ThemeIcon,
   Title,
   Tooltip,
-} from '@mantine/core'
-import { useDisclosure } from '@mantine/hooks'
-import { notifications } from '@mantine/notifications'
+} from "@mantine/core";
+import { useDisclosure } from "@mantine/hooks";
+import { notifications } from "@mantine/notifications";
 import {
   useCancelDownload,
   useDownloadJobs,
   useDownloaderPresets,
   useStartDownload,
-  type DownloadJob,
-  type ModelPreset,
-  type StartDownloadRequest,
+  type DownloadJobDto as DownloadJob,
+  type PresetDto as ModelPreset,
+  type StartDownloadDto as StartDownloadRequest,
   STATUS_COLOR,
   STATUS_LABEL,
   formatBytes,
-} from '@services/models/downloader'
+  type PresetsGroupedDto,
+} from "@services/models/downloader";
 import {
   ARCH_COLOR,
   ARCH_LABEL,
@@ -41,7 +42,7 @@ import {
   useModels,
   type ModelArchitecture,
   type ModelRole,
-} from '@services/models'
+} from "@services/models";
 import {
   IconAlertCircle,
   IconCheck,
@@ -55,8 +56,8 @@ import {
   IconPlayerStop,
   IconRefresh,
   IconX,
-} from '@tabler/icons-react'
-import { useMemo, useState } from 'react'
+} from "@tabler/icons-react";
+import { useMemo, useState } from "react";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Preset card
@@ -68,13 +69,13 @@ function PresetCard({
   isStarting,
   isOnDisk,
 }: {
-  preset: ModelPreset
-  onDownload: (preset: ModelPreset) => void
-  isStarting: boolean
-  isOnDisk: boolean
+  preset: ModelPreset;
+  onDownload: (preset: ModelPreset) => void;
+  isStarting: boolean;
+  isOnDisk: boolean;
 }) {
   // When the file is already on disk the user can explicitly request re-download.
-  const [forceDownload, setForceDownload] = useState(false)
+  const [forceDownload, setForceDownload] = useState(false);
   // const showDownloadBtn = !isOnDisk || forceDownload
 
   return (
@@ -84,10 +85,10 @@ function PresetCard({
       px="md"
       py="sm"
       style={{
-        borderBottom: '1px solid var(--mantine-color-default-border)',
-        '&:last-child': { borderBottom: 'none' },
+        borderBottom: "1px solid var(--mantine-color-default-border)",
+        "&:last-child": { borderBottom: "none" },
         opacity: isOnDisk && !forceDownload ? 0.75 : 1,
-        transition: 'opacity 0.15s',
+        transition: "opacity 0.15s",
       }}
     >
       {/* ── Info ── */}
@@ -104,7 +105,7 @@ function PresetCard({
                 color="teal"
                 variant="light"
                 leftSection={<IconCheck size={9} />}
-                style={{ cursor: 'default' }}
+                style={{ cursor: "default" }}
               >
                 On disk
               </Badge>
@@ -118,7 +119,7 @@ function PresetCard({
                 color="yellow"
                 variant="light"
                 leftSection={<IconKey size={9} />}
-                style={{ cursor: 'default' }}
+                style={{ cursor: "default" }}
               >
                 Gated
               </Badge>
@@ -132,7 +133,8 @@ function PresetCard({
           </Badge>
           {preset.sizeMb != null && (
             <Text size="xs" c="dimmed">
-              ~{preset.sizeMb >= 1000
+              ~
+              {preset.sizeMb >= 1000
                 ? `${(preset.sizeMb / 1024).toFixed(1)} GB`
                 : `${preset.sizeMb} MB`}
             </Text>
@@ -141,7 +143,11 @@ function PresetCard({
             <Text
               size="xs"
               c="dimmed"
-              style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+              style={{
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              }}
               maw={360}
             >
               {preset.description}
@@ -181,22 +187,22 @@ function PresetCard({
             )}
             <Button
               size="xs"
-              variant={isOnDisk ? 'outline' : 'light'}
-              color={isOnDisk ? 'orange' : undefined}
+              variant={isOnDisk ? "outline" : "light"}
+              color={isOnDisk ? "orange" : undefined}
               leftSection={<IconDownload size={13} />}
               onClick={() => {
-                setForceDownload(false)
-                onDownload(preset)
+                setForceDownload(false);
+                onDownload(preset);
               }}
               loading={isStarting}
             >
-              {isOnDisk ? 'Overwrite' : 'Download'}
+              {isOnDisk ? "Overwrite" : "Download"}
             </Button>
           </>
         )}
       </Group>
     </Group>
-  )
+  );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -208,25 +214,35 @@ function ArchHeader({
   count,
   downloadedCount,
 }: {
-  arch: ModelArchitecture
-  count: number
-  downloadedCount: number
+  arch: ModelArchitecture;
+  count: number;
+  downloadedCount: number;
 }) {
   return (
     <Group gap="sm" align="center">
-      <Badge size="md" variant="light" color={ARCH_COLOR[arch]} radius="sm" style={{ minWidth: 86 }}>
+      <Badge
+        size="md"
+        variant="light"
+        color={ARCH_COLOR[arch]}
+        radius="sm"
+        style={{ minWidth: 86 }}
+      >
         {ARCH_LABEL[arch]}
       </Badge>
       <Text size="sm" c="dimmed">
-        {count} {count === 1 ? 'preset' : 'presets'}
+        {count} {count === 1 ? "preset" : "presets"}
       </Text>
       {downloadedCount > 0 && (
-        <Text size="xs" c="teal.6" style={{ fontVariantNumeric: 'tabular-nums' }}>
+        <Text
+          size="xs"
+          c="teal.6"
+          style={{ fontVariantNumeric: "tabular-nums" }}
+        >
           · {downloadedCount}/{count} on disk
         </Text>
       )}
     </Group>
-  )
+  );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -234,27 +250,37 @@ function ArchHeader({
 // ─────────────────────────────────────────────────────────────────────────────
 
 const ARCH_ORDER: ModelArchitecture[] = [
-  'flux', 'chroma', 'sdxl', 'sd3', 'anima', 'lumina', 'hunyuan', 'sd1', 'sd2',
-]
+  "flux",
+  "chroma",
+  "sdxl",
+  "sd3",
+  "anima",
+  "lumina",
+  "hunyuan",
+  "sd1",
+  "sd2",
+];
 
 function PresetsTab({
   onDownload,
   startingId,
   onDiskFilenames,
 }: {
-  onDownload: (preset: ModelPreset) => void
-  startingId: string | null
+  onDownload: (preset: ModelPreset) => void;
+  startingId: string | null;
   /** Set of filenames currently present on disk (model.filename values) */
-  onDiskFilenames: Set<string>
+  onDiskFilenames: Set<string>;
 }) {
-  const { data: presets, isLoading, isError } = useDownloaderPresets()
-
+  const { data: presets, isLoading, isError } = useDownloaderPresets();
+  type ModelExtended = ModelPreset & {filename: string};
   if (isLoading) {
     return (
       <Stack gap="xs">
-        {[1, 2, 3, 4].map((i) => <Skeleton key={i} height={56} radius="md" />)}
+        {[1, 2, 3, 4].map((i) => (
+          <Skeleton key={i} height={56} radius="md" />
+        ))}
       </Stack>
-    )
+    );
   }
 
   if (isError || !presets) {
@@ -262,12 +288,43 @@ function PresetsTab({
       <Alert color="red" icon={<IconAlertCircle size={16} />} radius="md">
         Could not load presets.
       </Alert>
-    )
+    );
   }
 
-  const groups = ARCH_ORDER
-    .filter((arch) => presets[arch]?.length)
-    .map((arch) => ({ arch, items: presets[arch] }))
+  const correctedPresets = useMemo(() => {
+    if (!Array.isArray(presets)) return presets;
+
+    // Группируем массив в объект по ключу arch
+    const grouped = presets.reduce((acc, preset) => {
+      const arch = preset.arch as keyof PresetsGroupedDto;
+
+      if (!acc[arch]) {
+        acc[arch] = [];
+      }
+
+      acc[arch].push(preset);
+      return acc;
+    }, {} as PresetsGroupedDto);
+
+    return grouped;
+  }, [presets]);
+
+  const groups = useMemo(() => {
+    if (Array.isArray(correctedPresets)) return [];
+
+    return ARCH_ORDER.filter((arch) => {
+      const archi = arch as keyof PresetsGroupedDto
+      const models = correctedPresets[archi]
+      return (models?.length ?? 0 > 0)
+    }).map(
+      (arch) => {
+        const archi = arch as keyof PresetsGroupedDto
+        return {
+        arch,
+        items: (correctedPresets[archi] ?? []) as unknown as ModelExtended[],
+      }},
+    );
+  }, [correctedPresets]);
 
   return (
     <Accordion
@@ -277,17 +334,17 @@ function PresetsTab({
       radius="md"
       styles={{
         item: {
-          border: '1px solid var(--mantine-color-default-border)',
-          background: 'var(--gd-surface)',
+          border: "1px solid var(--mantine-color-default-border)",
+          background: "var(--gd-surface)",
         },
         control: { paddingTop: 10, paddingBottom: 10 },
         content: { padding: 0, paddingBottom: 0 },
       }}
     >
       {groups.map(({ arch, items }) => {
-        const downloadedCount = items.filter(
-          (p) => onDiskFilenames.has(p.filename),
-        ).length
+        const downloadedCount = items.filter((p) =>
+          onDiskFilenames.has(p.filename),
+        ).length;
 
         return (
           <Accordion.Item key={arch} value={arch}>
@@ -312,26 +369,32 @@ function PresetsTab({
               </Stack>
             </Accordion.Panel>
           </Accordion.Item>
-        )
+        );
       })}
     </Accordion>
-  )
+  );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Job row
 // ─────────────────────────────────────────────────────────────────────────────
 
-function JobRow({ job, onCancel }: { job: DownloadJob; onCancel: (id: string) => void }) {
-  const isActive = job.status === 'pending' || job.status === 'downloading'
-  const progress = job.progressPercent < 0 ? null : job.progressPercent
+function JobRow({
+  job,
+  onCancel,
+}: {
+  job: DownloadJob;
+  onCancel: (id: string) => void;
+}) {
+  const isActive = job.status === "pending" || job.status === "downloading";
+  const progress = job.progressPercent < 0 ? null : job.progressPercent;
 
   return (
     <Stack
       gap="xs"
       px="md"
       py="sm"
-      style={{ borderBottom: '1px solid var(--mantine-color-default-border)' }}
+      style={{ borderBottom: "1px solid var(--mantine-color-default-border)" }}
     >
       <Group justify="space-between" align="flex-start">
         <Stack gap={2} style={{ flex: 1, minWidth: 0 }}>
@@ -339,12 +402,20 @@ function JobRow({ job, onCancel }: { job: DownloadJob; onCancel: (id: string) =>
             <Text
               size="sm"
               fw={500}
-              style={{ fontFamily: 'var(--mantine-font-family-monospace)', fontSize: '0.8rem' }}
+              style={{
+                fontFamily: "var(--mantine-font-family-monospace)",
+                fontSize: "0.8rem",
+              }}
             >
               {job.filename}
             </Text>
-            <Badge size="xs" color={ARCH_COLOR[job.arch]} variant="light" radius="sm">
-              {ARCH_LABEL[job.arch]}
+            <Badge
+              size="xs"
+              color={ARCH_COLOR[job.arch as ModelArchitecture]}
+              variant="light"
+              radius="sm"
+            >
+              {ARCH_LABEL[job.arch as ModelArchitecture]}
             </Badge>
           </Group>
           <Group gap="xs">
@@ -353,7 +424,8 @@ function JobRow({ job, onCancel }: { job: DownloadJob; onCancel: (id: string) =>
             </Badge>
             {job.bytesTotal > 0 && (
               <Text size="xs" c="dimmed">
-                {formatBytes(job.bytesDownloaded)} / {formatBytes(job.bytesTotal)}
+                {formatBytes(job.bytesDownloaded)} /{" "}
+                {formatBytes(job.bytesTotal)}
               </Text>
             )}
             {job.bytesTotal === 0 && job.bytesDownloaded > 0 && (
@@ -365,7 +437,10 @@ function JobRow({ job, onCancel }: { job: DownloadJob; onCancel: (id: string) =>
               <Text
                 size="xs"
                 c="red"
-                style={{ fontFamily: 'var(--mantine-font-family-monospace)', fontSize: '0.75rem' }}
+                style={{
+                  fontFamily: "var(--mantine-font-family-monospace)",
+                  fontSize: "0.75rem",
+                }}
               >
                 {job.error}
               </Text>
@@ -391,14 +466,14 @@ function JobRow({ job, onCancel }: { job: DownloadJob; onCancel: (id: string) =>
         <Progress
           value={progress ?? 0}
           animated={progress === null || progress === 0}
-          color={job.status === 'pending' ? 'gray' : 'blue'}
+          color={job.status === "pending" ? "gray" : "blue"}
           size="sm"
           radius="xl"
-          striped={job.status === 'pending'}
+          striped={job.status === "pending"}
         />
       )}
     </Stack>
-  )
+  );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -406,17 +481,23 @@ function JobRow({ job, onCancel }: { job: DownloadJob; onCancel: (id: string) =>
 // ─────────────────────────────────────────────────────────────────────────────
 
 function JobsTab({ onCancel }: { onCancel: (id: string) => void }) {
-  const { data: jobs = [], isLoading } = useDownloadJobs()
+  const { data: jobs = [], isLoading } = useDownloadJobs();
 
-  const active = jobs.filter((j) => j.status === 'pending' || j.status === 'downloading')
-  const history = jobs.filter((j) => j.status !== 'pending' && j.status !== 'downloading')
+  const active = jobs.filter(
+    (j) => j.status === "pending" || j.status === "downloading",
+  );
+  const history = jobs.filter(
+    (j) => j.status !== "pending" && j.status !== "downloading",
+  );
 
   if (isLoading) {
     return (
       <Stack gap="xs">
-        {[1, 2].map((i) => <Skeleton key={i} height={72} radius="md" />)}
+        {[1, 2].map((i) => (
+          <Skeleton key={i} height={72} radius="md" />
+        ))}
       </Stack>
-    )
+    );
   }
 
   if (jobs.length === 0) {
@@ -424,21 +505,23 @@ function JobsTab({ onCancel }: { onCancel: (id: string) => void }) {
       <Box
         style={{
           minHeight: 200,
-          display: 'flex',
-          flexDirection: 'column',
-          alignItems: 'center',
-          justifyContent: 'center',
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          justifyContent: "center",
           gap: 8,
-          border: '1px solid var(--mantine-color-default-border)',
+          border: "1px solid var(--mantine-color-default-border)",
           borderRadius: 8,
         }}
       >
         <ThemeIcon size={48} variant="light" color="gray" radius="xl">
           <IconCloudDownload size={24} />
         </ThemeIcon>
-        <Text size="sm" c="dimmed">No downloads yet</Text>
+        <Text size="sm" c="dimmed">
+          No downloads yet
+        </Text>
       </Box>
-    )
+    );
   }
 
   return (
@@ -447,20 +530,31 @@ function JobsTab({ onCancel }: { onCancel: (id: string) => void }) {
         <Stack
           gap={0}
           style={{
-            border: '1px solid var(--mantine-color-default-border)',
+            border: "1px solid var(--mantine-color-default-border)",
             borderRadius: 8,
-            overflow: 'hidden',
-            background: 'var(--gd-surface)',
+            overflow: "hidden",
+            background: "var(--gd-surface)",
           }}
         >
           <Group
             gap="xs"
             px="md"
             py="xs"
-            style={{ borderBottom: '1px solid var(--mantine-color-default-border)' }}
+            style={{
+              borderBottom: "1px solid var(--mantine-color-default-border)",
+            }}
           >
-            <IconLoader2 size={14} style={{ color: 'var(--mantine-color-blue-5)' }} />
-            <Text size="xs" fw={600} c="dimmed" tt="uppercase" style={{ letterSpacing: '0.06em' }}>
+            <IconLoader2
+              size={14}
+              style={{ color: "var(--mantine-color-blue-5)" }}
+            />
+            <Text
+              size="xs"
+              fw={600}
+              c="dimmed"
+              tt="uppercase"
+              style={{ letterSpacing: "0.06em" }}
+            >
               Active
             </Text>
             <Badge size="xs" color="blue" variant="filled" circle>
@@ -477,20 +571,31 @@ function JobsTab({ onCancel }: { onCancel: (id: string) => void }) {
         <Stack
           gap={0}
           style={{
-            border: '1px solid var(--mantine-color-default-border)',
+            border: "1px solid var(--mantine-color-default-border)",
             borderRadius: 8,
-            overflow: 'hidden',
-            background: 'var(--gd-surface)',
+            overflow: "hidden",
+            background: "var(--gd-surface)",
           }}
         >
           <Group
             gap="xs"
             px="md"
             py="xs"
-            style={{ borderBottom: '1px solid var(--mantine-color-default-border)' }}
+            style={{
+              borderBottom: "1px solid var(--mantine-color-default-border)",
+            }}
           >
-            <IconHistory size={14} style={{ color: 'var(--mantine-color-dimmed)' }} />
-            <Text size="xs" fw={600} c="dimmed" tt="uppercase" style={{ letterSpacing: '0.06em' }}>
+            <IconHistory
+              size={14}
+              style={{ color: "var(--mantine-color-dimmed)" }}
+            />
+            <Text
+              size="xs"
+              fw={600}
+              c="dimmed"
+              tt="uppercase"
+              style={{ letterSpacing: "0.06em" }}
+            >
               History
             </Text>
           </Group>
@@ -500,15 +605,40 @@ function JobsTab({ onCancel }: { onCancel: (id: string) => void }) {
         </Stack>
       )}
     </Stack>
-  )
+  );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Custom URL modal
 // ─────────────────────────────────────────────────────────────────────────────
 
-const ALL_ARCHS: ModelArchitecture[] = ['flux', 'chroma', 'sdxl', 'sd3', 'anima', 'lumina', 'hunyuan', 'sd1', 'sd2']
-const ALL_ROLES: ModelRole[] = ['checkpoint', 'dit', 'unet', 'ae', 'vae', 'clip_l', 'clip_g', 't5xxl', 'gemma2', 'qwen3', 'qwen2_5_vl', 'byt5', 'lora', 'text_encoder']
+const ALL_ARCHS: ModelArchitecture[] = [
+  "flux",
+  "chroma",
+  "sdxl",
+  "sd3",
+  "anima",
+  "lumina",
+  "hunyuan",
+  "sd1",
+  "sd2",
+];
+const ALL_ROLES: ModelRole[] = [
+  "checkpoint",
+  "dit",
+  "unet",
+  "ae",
+  "vae",
+  "clip_l",
+  "clip_g",
+  "t5xxl",
+  "gemma2",
+  "qwen3",
+  "qwen2_5_vl",
+  "byt5",
+  "lora",
+  "text_encoder",
+];
 
 function CustomUrlModal({
   opened,
@@ -516,36 +646,41 @@ function CustomUrlModal({
   onSubmit,
   isLoading,
 }: {
-  opened: boolean
-  onClose: () => void
-  onSubmit: (body: StartDownloadRequest) => void
-  isLoading: boolean
+  opened: boolean;
+  onClose: () => void;
+  onSubmit: (body: StartDownloadRequest) => void;
+  isLoading: boolean;
 }) {
-  const [url, setUrl] = useState('')
-  const [arch, setArch] = useState<ModelArchitecture | null>(null)
-  const [role, setRole] = useState<ModelRole | null>(null)
-  const [filename, setFilename] = useState('')
-  const [urlError, setUrlError] = useState<string | null>(null)
+  const [url, setUrl] = useState("");
+  const [arch, setArch] = useState<ModelArchitecture | null>(null);
+  const [role, setRole] = useState<ModelRole | null>(null);
+  const [filename, setFilename] = useState("");
+  const [urlError, setUrlError] = useState<string | null>(null);
 
-  const canSubmit = url.trim().startsWith('http') && arch && role
+  const canSubmit = url.trim().startsWith("http") && arch && role;
 
   const handleSubmit = () => {
-    if (!url.trim().startsWith('http')) {
-      setUrlError('Must be a valid https:// URL')
-      return
+    if (!url.trim().startsWith("http")) {
+      setUrlError("Must be a valid https:// URL");
+      return;
     }
-    if (!arch || !role) return
-    onSubmit({ url: url.trim(), arch, role, filename: filename.trim() || undefined })
-  }
+    if (!arch || !role) return;
+    onSubmit({
+      url: url.trim(),
+      arch,
+      role,
+      filename: filename.trim() || undefined,
+    });
+  };
 
   const handleClose = () => {
-    setUrl('')
-    setArch(null)
-    setRole(null)
-    setFilename('')
-    setUrlError(null)
-    onClose()
-  }
+    setUrl("");
+    setArch(null);
+    setRole(null);
+    setFilename("");
+    setUrlError(null);
+    onClose();
+  };
 
   return (
     <Modal
@@ -554,7 +689,9 @@ function CustomUrlModal({
       title={
         <Group gap="xs">
           <IconLink size={16} />
-          <Text fw={600} size="sm">Download from URL</Text>
+          <Text fw={600} size="sm">
+            Download from URL
+          </Text>
         </Group>
       }
       radius="md"
@@ -566,7 +703,10 @@ function CustomUrlModal({
           description="HuggingFace, CivitAI or direct HTTPS link"
           placeholder="https://huggingface.co/.../resolve/main/model.safetensors"
           value={url}
-          onChange={(e) => { setUrl(e.currentTarget.value); setUrlError(null) }}
+          onChange={(e) => {
+            setUrl(e.currentTarget.value);
+            setUrlError(null);
+          }}
           error={urlError}
           leftSection={<IconLink size={14} />}
         />
@@ -583,7 +723,10 @@ function CustomUrlModal({
           <Select
             label="Role"
             placeholder="Select role"
-            data={ALL_ROLES.map((r) => ({ value: r, label: ROLE_LABEL[r as ModelRole] ?? r }))}
+            data={ALL_ROLES.map((r) => ({
+              value: r,
+              label: ROLE_LABEL[r as ModelRole] ?? r,
+            }))}
             value={role}
             onChange={(v) => setRole(v as ModelRole | null)}
             required
@@ -602,7 +745,12 @@ function CustomUrlModal({
         <Divider />
 
         <Group justify="flex-end">
-          <Button variant="subtle" color="gray" onClick={handleClose} disabled={isLoading}>
+          <Button
+            variant="subtle"
+            color="gray"
+            onClick={handleClose}
+            disabled={isLoading}
+          >
             Cancel
           </Button>
           <Button
@@ -616,7 +764,7 @@ function CustomUrlModal({
         </Group>
       </Stack>
     </Modal>
-  )
+  );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -624,83 +772,85 @@ function CustomUrlModal({
 // ─────────────────────────────────────────────────────────────────────────────
 
 export default function HFDownloaderPage() {
-  const [tab, setTab] = useState<string | null>('presets')
-  const [startingId, setStartingId] = useState<string | null>(null)
-  const [customModalOpen, { open: openCustom, close: closeCustom }] = useDisclosure(false)
+  const [tab, setTab] = useState<string | null>("presets");
+  const [startingId, setStartingId] = useState<string | null>(null);
+  const [customModalOpen, { open: openCustom, close: closeCustom }] =
+    useDisclosure(false);
 
-  const { data: jobs = [] } = useDownloadJobs()
-  const { data: models = [] } = useModels()
-  const startMutation = useStartDownload()
-  const cancelMutation = useCancelDownload()
+  const { data: jobs = [] } = useDownloadJobs();
+  const { data: models = [] } = useModels();
+  const startMutation = useStartDownload();
+  const cancelMutation = useCancelDownload();
 
   /** Set of all filenames currently on disk — used to mark presets as downloaded. */
-  const onDiskFilenames = useMemo(
-    () => new Set(models.map((m) => m.filename)),
-    [models],
-  )
+  const onDiskFilenames = useMemo(() => {
+    let mdls = models;
+    if (!Array.isArray(mdls)) mdls = [mdls];
+    return new Set(mdls.map((m) => m.filename));
+  }, [models]);
 
   const activeCount = jobs.filter(
-    (j) => j.status === 'pending' || j.status === 'downloading',
-  ).length
+    (j) => j.status === "pending" || j.status === "downloading",
+  ).length;
 
   // ── Handlers ───────────────────────────────────────────────────────────────
 
   const handlePresetDownload = async (preset: ModelPreset) => {
-    setStartingId(preset.id)
+    setStartingId(preset.id);
     try {
-      await startMutation.mutateAsync({ presetId: preset.id })
+      await startMutation.mutateAsync({ presetId: preset.id });
       notifications.show({
-        title: 'Download started',
+        title: "Download started",
         message: preset.name,
-        color: 'blue',
+        color: "blue",
         icon: <IconCheck size={14} />,
         autoClose: 3000,
-      })
-      setTab('jobs')
+      });
+      setTab("jobs");
     } catch (e) {
       notifications.show({
-        title: 'Failed to start download',
-        message: e instanceof Error ? e.message : 'Unknown error',
-        color: 'red',
+        title: "Failed to start download",
+        message: e instanceof Error ? e.message : "Unknown error",
+        color: "red",
         icon: <IconX size={14} />,
-      })
+      });
     } finally {
-      setStartingId(null)
+      setStartingId(null);
     }
-  }
+  };
 
   const handleCustomDownload = async (body: StartDownloadRequest) => {
     try {
-      await startMutation.mutateAsync(body)
+      await startMutation.mutateAsync(body);
       notifications.show({
-        title: 'Download started',
-        message: 'url' in body ? body.url.split('/').pop() : body.presetId,
-        color: 'blue',
+        title: "Download started",
+        message: "url" in body ? body.url?.split("/").pop() : body.presetId,
+        color: "blue",
         icon: <IconCheck size={14} />,
         autoClose: 3000,
-      })
-      closeCustom()
-      setTab('jobs')
+      });
+      closeCustom();
+      setTab("jobs");
     } catch (e) {
       notifications.show({
-        title: 'Failed to start download',
-        message: e instanceof Error ? e.message : 'Unknown error',
-        color: 'red',
+        title: "Failed to start download",
+        message: e instanceof Error ? e.message : "Unknown error",
+        color: "red",
         icon: <IconX size={14} />,
-      })
+      });
     }
-  }
+  };
 
   const handleCancel = async (id: string) => {
-    await cancelMutation.mutateAsync(id)
+    await cancelMutation.mutateAsync(id);
     notifications.show({
-      title: 'Download cancelled',
+      title: "Download cancelled",
       message: jobs.find((j) => j.id === id)?.filename ?? id,
-      color: 'orange',
+      color: "orange",
       icon: <IconPlayerStop size={14} />,
       autoClose: 2500,
-    })
-  }
+    });
+  };
 
   // ── Render ─────────────────────────────────────────────────────────────────
 
@@ -713,13 +863,15 @@ export default function HFDownloaderPage() {
         isLoading={startMutation.isPending}
       />
 
-      <Stack gap={0} h="100%" style={{ overflow: 'hidden' }}>
-
+      <Stack gap={0} h="100%" style={{ overflow: "hidden" }}>
         {/* Header */}
         <Box
           p="lg"
           pb="md"
-          style={{ borderBottom: '1px solid var(--mantine-color-default-border)', flexShrink: 0 }}
+          style={{
+            borderBottom: "1px solid var(--mantine-color-default-border)",
+            flexShrink: 0,
+          }}
         >
           <Group justify="space-between" align="center">
             <Stack gap={2}>
@@ -733,7 +885,8 @@ export default function HFDownloaderPage() {
                 )}
               </Group>
               <Text size="xs" c="dimmed">
-                Download base models and text encoders from HuggingFace or CivitAI
+                Download base models and text encoders from HuggingFace or
+                CivitAI
               </Text>
             </Stack>
 
@@ -752,10 +905,15 @@ export default function HFDownloaderPage() {
         <Tabs
           value={tab}
           onChange={setTab}
-          style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}
+          style={{
+            flex: 1,
+            display: "flex",
+            flexDirection: "column",
+            minHeight: 0,
+          }}
           styles={{
-            root: { display: 'flex', flexDirection: 'column', flex: 1 },
-            panel: { flex: 1, overflow: 'hidden' },
+            root: { display: "flex", flexDirection: "column", flex: 1 },
+            panel: { flex: 1, overflow: "hidden" },
           }}
         >
           <Tabs.List px="lg" style={{ flexShrink: 0 }}>
@@ -778,7 +936,7 @@ export default function HFDownloaderPage() {
           </Tabs.List>
 
           <Tabs.Panel value="presets">
-            <ScrollArea style={{ height: '100%' }} p="lg">
+            <ScrollArea style={{ height: "100%" }} p="lg">
               <PresetsTab
                 onDownload={(p) => void handlePresetDownload(p)}
                 startingId={startingId}
@@ -788,13 +946,12 @@ export default function HFDownloaderPage() {
           </Tabs.Panel>
 
           <Tabs.Panel value="jobs">
-            <ScrollArea style={{ height: '100%' }} p="lg">
+            <ScrollArea style={{ height: "100%" }} p="lg">
               <JobsTab onCancel={(id) => void handleCancel(id)} />
             </ScrollArea>
           </Tabs.Panel>
         </Tabs>
-
       </Stack>
     </>
-  )
+  );
 }

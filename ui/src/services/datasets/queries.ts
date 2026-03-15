@@ -6,8 +6,8 @@ export const useDatasets = () =>
   useQuery({
     queryKey: datasetsQueryKeys.all,
     queryFn: () => datasetsApi.list(),
-    refetchInterval: 5_000,
-    staleTime: 4_500,
+    refetchInterval: 60_000,
+    staleTime: 55_500,
     throwOnError: false,
   })
 
@@ -15,8 +15,8 @@ export const useDataset = (name: string) =>
   useQuery({
     queryKey: datasetsQueryKeys.detail(name),
     queryFn: () => datasetsApi.getOne(name),
-    refetchInterval: 5_000,
-    staleTime: 4_500,
+    refetchInterval: 35_000,
+    staleTime: 30_500,
     throwOnError: false,
   })
 

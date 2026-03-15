@@ -1,13 +1,13 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { tokensApi } from './api'
-import type { UpdateTokensDto } from './types'
+import type { UpdateTokens } from './types'
 import { tokensQueryKeys } from './keys'
 
 export const useUpdateTokens = () => {
   const queryClient = useQueryClient()
 
   return useMutation({
-    mutationFn: (dto: UpdateTokensDto) => tokensApi.update(dto),
+    mutationFn: (dto: UpdateTokens) => tokensApi.update(dto),
     onSuccess: (updated) => {
       queryClient.setQueryData(tokensQueryKeys.all, updated)
     },

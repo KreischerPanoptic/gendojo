@@ -1,5 +1,5 @@
-import type { CSSProperties } from 'react'
 import type { DatasetImage } from '@services/datasets'
+import type { CSSProperties } from 'react'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Props

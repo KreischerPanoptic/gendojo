@@ -1,7 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { modelsApi, type ModelsListParams } from './api'
+import { modelsApi } from './api'
 import { modelsQueryKeys } from './keys'
-import type { ModelArchitecture } from './types'
+import type { ModelArchitecture, ModelsListParams } from './types'
 
 // ─────────────────────────────────────────────────────────────────────────────
 

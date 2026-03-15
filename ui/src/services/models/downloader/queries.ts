@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query'
 import { downloaderApi } from './api'
 import { downloaderQueryKeys } from './keys'
-import type { DownloadJob } from './types'
+import type { DownloadJobDto } from '@api/types.gen'
 
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -12,7 +12,7 @@ export const useDownloaderPresets = () => {
   return useQuery({
     queryKey: downloaderQueryKeys.presets,
     queryFn: () => downloaderApi.listPresets(),
-    staleTime: Infinity,
+    staleTime: 10_000,
     throwOnError: false,
   })
 }
@@ -30,7 +30,7 @@ export const useDownloadJobs = () => {
     queryKey: downloaderQueryKeys.jobs,
     queryFn: () => downloaderApi.listJobs(),
     refetchInterval: (query) => {
-      const jobs: DownloadJob[] = query.state.data ?? []
+      const jobs: DownloadJobDto[] = query.state.data ?? []
       const hasActive = jobs.some(
         (j) => j.status === 'pending' || j.status === 'downloading',
       )

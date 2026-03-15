@@ -1,24 +1,16 @@
-import { apiClient } from '@services/client'
+import { systemControllerGetSnapshot, systemControllerRefresh } from '@api/sdk.gen'
 import type { SystemSnapshot } from './types'
 
 export const systemApi = {
-  /**
-   * GET /system
-   * Returns the last cached snapshot (collected every 5s by the server).
-   * Fast — no GPU polling on request, just returns latest cached value.
-   */
-  getSnapshot: async (): Promise<SystemSnapshot> => {
-    const { data } = await apiClient.get<SystemSnapshot>('/system')
-    return data
-  },
+  getSnapshot: (): Promise<SystemSnapshot> =>
+    systemControllerGetSnapshot().then(r => {
+      if (!r.data) throw new Error(`Can't get system statistics.`)
+      return r.data
+    }),
 
-  /**
-   * POST /system/refresh
-   * Forces an immediate re-poll of nvidia-smi + disk.
-   * Use sparingly — normal UI should rely on getSnapshot polling.
-   */
-  refresh: async (): Promise<SystemSnapshot> => {
-    const { data } = await apiClient.post<SystemSnapshot>('/system/refresh')
-    return data
-  },
+  refresh: (): Promise<SystemSnapshot> =>
+    systemControllerRefresh().then(r => {
+      if (!r.data) throw new Error(`Can't refresh system statistics.`)
+      return r.data
+    }),
 }

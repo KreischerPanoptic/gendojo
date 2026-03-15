@@ -2,9 +2,11 @@
 // Caption type & prepend mode
 // ─────────────────────────────────────────────────────────────────────────────
 
-export type CaptionType = 'tag_list' | 'natural_language' | 'mixed' | 'unknown'
+import type { CaptionStatsDto, DatasetMetaDto, PrependTokenDto } from '@api/types.gen'
 
-export type PrependMode = 'tag_list' | 'nl_prefix' | 'nl_style' | 'nl_character'
+export type CaptionType = DatasetMetaDto['captionType']
+
+export type PrependMode = PrependTokenDto['mode']
 
 export const PREPEND_MODE_LABELS: Record<PrependMode, string> = {
   tag_list:     'Tag list  →  token, <rest>',
@@ -12,6 +14,7 @@ export const PREPEND_MODE_LABELS: Record<PrependMode, string> = {
   nl_style:     'NL style  →  In style of token, <rest>',
   nl_character: 'NL character  →  token character, <rest>',
 }
+
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Caption length stats
@@ -24,12 +27,7 @@ export const CAPTION_LENGTH_THRESHOLDS = {
   T5: 900,
 } as const
 
-export interface CaptionStats {
-  charCount: number
-  wordCount: number
-  isLongForClip: boolean
-  isLongForT5: boolean
-}
+export type CaptionStats = CaptionStatsDto;
 
 /**
  * Compute CaptionStats client-side. Mirrors the backend logic so the editor
@@ -48,103 +46,40 @@ export function computeCaptionStats(text: string): CaptionStats {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Dataset metadata
+// Types from generated OpenAPI schema
 // ─────────────────────────────────────────────────────────────────────────────
-
-export interface DatasetMeta {
-  activationToken: string | null
-  captionType: CaptionType
-  notes: string
-  createdAt: string
-}
-
-export type DatasetMetaUpdate = Partial<
-  Pick<DatasetMeta, 'activationToken' | 'captionType' | 'notes'>
->
-
+ 
+export type {
+  DatasetSummaryDto         as DatasetSummary,
+  DatasetDetailDto          as DatasetDetail,
+  DatasetMetaDto            as DatasetMeta,
+  UploadResultDto           as UploadDatasetResponse,
+  InitChunkedUploadResponseDto as InitChunkedUploadResponse,
+  GetCaptionResponseDto     as GetCaptionResponse,
+  UpsertCaptionResponseDto  as UpsertCaptionResponse,
+  DeleteCaptionResponseDto  as DeleteCaptionResponse,
+  PrependTokenResultDto     as PrependTokenResult,
+  DetectCaptionTypeResultDto as CaptionTypeDetectionResult,
+  DeleteImageResponseDto    as DeleteImageResponse,
+  DeleteDatasetResponseDto  as DeleteDatasetResponse,
+  ReplaceImageResponseDto   as ReplaceImageResponse,
+  UpdateMetaDto             as DatasetMetaUpdate,
+  DatasetImageDto           as DatasetImage,
+  UpdateMetaDto             as UpdateMeta,
+  PrependTokenDto,
+  UpsertCaptionDto,
+} from '@api/types.gen'
+ 
 // ─────────────────────────────────────────────────────────────────────────────
-// Image record
+// Manual types — not in OpenAPI spec (XHR upload progress)
 // ─────────────────────────────────────────────────────────────────────────────
-
-export interface DatasetImage {
-  filename: string
-  path: string
-  sizeBytes: number
-  hasCaption: boolean
-  /** null when hasCaption is false */
-  captionStats: CaptionStats | null
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Dataset summary (GET /datasets)
-// ─────────────────────────────────────────────────────────────────────────────
-
-export interface DatasetSummary {
-  name: string
-  path: string
-  imageCount: number
-  captionedCount: number
-  /** 0–1 fraction */
-  captionCoverage: number
-  updatedAt: string
-  /** null when dataset.meta.json doesn't exist yet */
-  meta: DatasetMeta | null
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Dataset detail (GET /datasets/:name)
-// ─────────────────────────────────────────────────────────────────────────────
-
-export interface CaptionLengthSummary {
-  longForClipCount: number
-  longForT5Count:   number
-  avgCharCount:     number
-  avgWordCount:     number
-}
-
-export interface DatasetDetail extends DatasetSummary {
-  images: DatasetImage[]
-  /** null when no captions are present */
-  captionLengthSummary: CaptionLengthSummary | null
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Upload
-// ─────────────────────────────────────────────────────────────────────────────
-
-export interface UploadDatasetRequest {
-  file: File
-}
-
-export interface UploadDatasetResponse {
-  name: string
-  imageCount: number
-  extractedCount: number
-}
-
+ 
+/** XHR upload progress event — mirrors ProgressEvent but serializable */
 export interface UploadProgressEvent {
+  /** 0–100 */
   percent: number
-  loaded:  number
-  total:   number
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Caption detection
-// ─────────────────────────────────────────────────────────────────────────────
-
-export interface CaptionTypeDetectionResult {
-  captionType:  CaptionType
-  sampleSize:   number
-  tagListRatio: number
-  meta:         DatasetMeta
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Prepend token
-// ─────────────────────────────────────────────────────────────────────────────
-
-export interface PrependTokenResult {
-  updated: number
-  skipped: number
-  missing: number
+  /** Bytes transferred so far */
+  loaded: number
+  /** Total file size in bytes */
+  total: number
 }

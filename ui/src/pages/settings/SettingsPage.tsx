@@ -75,8 +75,23 @@ function SettingsSection({
 // ─────────────────────────────────────────────────────────────────────────────
 
 function AppearanceSection() {
-  const { theme, toggleTheme } = useThemeStore()
-  const isDark = theme === 'dark'
+  const { data: settings } = useSettings()
+  const tmpTheme = settings?.theme ?? 'auto'
+  const serverTheme = tmpTheme === 'auto' ? 
+    window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light' : tmpTheme
+
+  const updateSettings = useUpdateSettings()
+
+  const { setTheme } = useThemeStore();
+  const isDark = serverTheme === 'dark'
+
+  const updateTheme = async (theme: 'dark' | 'light') => {
+    setTheme(theme);
+    const dto: UpdateSettingsDto = {
+      theme
+    }
+    await updateSettings.mutateAsync(dto).catch(() => null)
+  }
 
   return (
     <SettingsSection
@@ -89,7 +104,7 @@ function AppearanceSection() {
           variant={isDark ? 'filled' : 'outline'}
           size="xs"
           leftSection={<IconMoon size={14} />}
-          onClick={() => !isDark && toggleTheme()}
+          onClick={async () => !isDark && await updateTheme('dark')}
           color="dark"
         >
           Dark
@@ -98,7 +113,7 @@ function AppearanceSection() {
           variant={!isDark ? 'filled' : 'outline'}
           size="xs"
           leftSection={<IconSun size={14} />}
-          onClick={() => isDark && toggleTheme()}
+          onClick={async () => isDark && await updateTheme('light')}
           color="orange"
         >
           Light
@@ -283,11 +298,11 @@ function PathsSection() {
 
   const form = useForm({
     initialValues: {
-      models: settings?.paths.models ?? '',
-      datasets: settings?.paths.datasets ?? '',
-      outputs: settings?.paths.outputs ?? '',
-      logs: settings?.paths.logs ?? '',
-      sdScripts: settings?.paths.sdScripts ?? '',
+      models: settings?.modelsPath ?? '',
+      datasets: settings?.datasetsPath ?? '',
+      outputs: settings?.outputsPath?? '',
+      logs: settings?.logsPath ?? '',
+      sdScripts: settings?.sdScriptsPath ?? '',
     },
     // Sync when data loads
     enhanceGetInputProps: () => ({ disabled: isLoading }),
@@ -297,11 +312,11 @@ function PathsSection() {
   const [synced, setSynced] = useState(false)
   if (settings && !synced) {
     form.setValues({
-      models: settings.paths.models,
-      datasets: settings.paths.datasets,
-      outputs: settings.paths.outputs,
-      logs: settings.paths.logs,
-      sdScripts: settings.paths.sdScripts,
+      models: settings.modelsPath,
+      datasets: settings.datasetsPath,
+      outputs: settings.outputsPath,
+      logs: settings.logsPath,
+      sdScripts: settings.sdScriptsPath,
     })
     setSynced(true)
   }
@@ -399,18 +414,18 @@ function TrainingSection() {
 
   const form = useForm({
     initialValues: {
-      maxConcurrentJobs: settings?.training.maxConcurrentJobs ?? 1,
-      logBufferSize: settings?.training.logBufferSize ?? 2000,
-      cpuThreadsPerProcess: settings?.training.cpuThreadsPerProcess ?? 2,
+      maxConcurrentJobs: settings?.maxConcurrentJobs ?? 1,
+      logBufferSize: settings?.logBufferSize ?? 2000,
+      cpuThreadsPerProcess: settings?.cpuThreadsPerProcess ?? 2,
     },
   })
 
   const [synced, setSynced] = useState(false)
   if (settings && !synced) {
     form.setValues({
-      maxConcurrentJobs: settings.training.maxConcurrentJobs,
-      logBufferSize: settings.training.logBufferSize,
-      cpuThreadsPerProcess: settings.training.cpuThreadsPerProcess,
+      maxConcurrentJobs: settings.maxConcurrentJobs,
+      logBufferSize: settings.logBufferSize,
+      cpuThreadsPerProcess: settings.cpuThreadsPerProcess,
     })
     setSynced(true)
   }

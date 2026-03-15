@@ -1,31 +1,23 @@
-import { apiClient } from '@services/client'
-import type { TokensResponse, UpdateTokensDto } from './types'
+import { tokensControllerClear, tokensControllerGet, tokensControllerUpdate } from '@api/sdk.gen'
+import type { TokensResponse, UpdateTokens } from './types'
+import type { TokensControllerClearData } from '@api/types.gen'
 
 export const tokensApi = {
-  /**
-   * GET /settings/tokens
-   * Returns masked token info — never raw values.
-   */
-  get: async (): Promise<TokensResponse> => {
-    const { data } = await apiClient.get<TokensResponse>('/settings/tokens')
-    return data
-  },
+  get: (): Promise<TokensResponse> =>
+    tokensControllerGet().then(r => {
+      if (!r.data) throw new Error(`Can't get tokens.`)
+      return r.data
+    }),
 
-  /**
-   * PUT /settings/tokens
-   * Upsert one or both tokens.
-   */
-  update: async (dto: UpdateTokensDto): Promise<TokensResponse> => {
-    const { data } = await apiClient.put<TokensResponse>('/settings/tokens', dto)
-    return data
-  },
+  update: (body: UpdateTokens): Promise<TokensResponse> =>
+    tokensControllerUpdate({ body }).then(r => {
+      if (!r.data) throw new Error(`Can't update tokens.`)
+      return r.data
+    }),
 
-  /**
-   * DELETE /settings/tokens/:key
-   * Clear a specific token from persisted storage.
-   */
-  clear: async (key: 'hfToken' | 'civitaiToken'): Promise<TokensResponse> => {
-    const { data } = await apiClient.delete<TokensResponse>(`/settings/tokens/${key}`)
-    return data
-  },
+  clear: async (key: TokensControllerClearData['path']['key']): Promise<TokensResponse> =>
+    tokensControllerClear({ path: { key } }).then(r => {
+      if (!r.data) throw new Error(`Can't clear tokens.`)
+      return r.data
+    }),
 }

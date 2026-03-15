@@ -24,6 +24,7 @@
     "noFallthroughCasesInSwitch": true,
     "noUncheckedSideEffectImports": true,
     "paths": {
+      "@api/*": ["./src/generated/api/*"],
       "@data/*": ["./src/data/*"],
       "@ui/*": ["./src/components/*"],
       "@blocks/*": ["./src/blocks/*"],
@@ -36,6 +37,7 @@
       "@stores/*": ["./src/stores/*"],
       "@hooks/*": ["./src/hooks/*"],
       "@lib/*": ["./src/lib/*"],
+      "@root/*": ["./src/*"]
     }
   },
   "include": ["src"]

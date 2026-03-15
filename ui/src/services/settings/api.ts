@@ -1,32 +1,22 @@
-import { apiClient } from '@services/client'
-import type { AppSettings, PathsInfo, UpdateSettingsDto } from './types'
+import { settingsControllerGetPaths, settingsControllerGetSettings, settingsControllerUpdateSettings } from '@api/sdk.gen'
+import type { SettingsDto, PathsDto, UpdateSettingsDto } from './types'
 
 export const settingsApi = {
-  /**
-   * GET /settings
-   * Full settings object (paths + training constants).
-   */
-  get: async (): Promise<AppSettings> => {
-    const { data } = await apiClient.get<AppSettings>('/settings')
-    return data
-  },
+  get: (): Promise<SettingsDto> =>
+    settingsControllerGetSettings().then(r => {
+      if (!r.data) throw new Error(`Can't get settings.`)
+      return r.data
+    }),
 
-  /**
-   * GET /settings/paths
-   * Resolved absolute paths for all workspace volumes including
-   * static paths (accelerateConfig, temp) not editable via UI.
-   */
-  getPaths: async (): Promise<PathsInfo> => {
-    const { data } = await apiClient.get<PathsInfo>('/settings/paths')
-    return data
-  },
+  getPaths: (): Promise<PathsDto> =>
+    settingsControllerGetPaths().then(r => {
+      if (!r.data) throw new Error(`Can't get paths.`)
+      return r.data
+    }),
 
-  /**
-   * PUT /settings
-   * Partial update — only provided fields are changed.
-   */
-  update: async (dto: UpdateSettingsDto): Promise<AppSettings> => {
-    const { data } = await apiClient.put<AppSettings>('/settings', dto)
-    return data
-  },
+  update: (body: UpdateSettingsDto): Promise<SettingsDto> =>
+    settingsControllerUpdateSettings({ body }).then(r => {
+      if (!r.data) throw new Error(`Can't update settings.`)
+      return r.data
+    }),
 }

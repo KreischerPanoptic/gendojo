@@ -108,7 +108,7 @@ export function LightboxModal({
       overlayProps={{ blur: 4, backgroundOpacity: 0.7 }}
       styles={{ body: { padding: 0 } }}
     >
-      <Group gap={0} align="stretch" style={{ minHeight: 500, maxHeight: '80vh' }}>
+      <Group gap={0} align="stretch" className='flex-col! max-h-fit! md:max-h-[80h]! md:flex-row!' style={{ minHeight: 500 }}>
 
         {/* ── Image pane ───────────────────────────────────────────────────── */}
         <Box
@@ -138,6 +138,7 @@ export function LightboxModal({
                 const el = e.currentTarget
                 setDimensions({ w: el.naturalWidth, h: el.naturalHeight })
               }}
+              className='max-h-95! md:max-h-full!'
               style={{
                 maxWidth: '100%',
                 maxHeight: '100%',
@@ -184,6 +185,7 @@ export function LightboxModal({
         {/* ── Side panel — fully owned by the render prop ──────────────────── */}
         <Box
           w={280}
+          className='w-full! md:w-70!'
           style={{
             flexShrink: 0,
             display: 'flex',

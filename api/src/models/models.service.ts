@@ -17,13 +17,13 @@ import {
   ModelRole,
   ModelsOptions,
   ModelType,
-} from './entities/models.types';
-import { CLASSIFY_RULES, ROLE_TO_TYPE } from './entities/models.rules';
+} from './types/models.types';
+import { CLASSIFY_RULES, ROLE_TO_TYPE } from './rules/models.rules';
 import {
   ARCH_REQUIRED_ROLES,
   ARCH_ROLE_DIR,
   ArchRoleDirMap,
-} from './entities/models.constants';
+} from './constants/models.constants';
 import {
   ArchReadinessResult,
   DeleteArchPreview,
@@ -32,15 +32,15 @@ import {
   FileIntegrityResult,
   RolePresence,
   SharedFileWarning,
-} from './entities/models.integrity.types';
-import { FILE_HASHES } from './entities/models-hashes.registry';
+} from './types/models.integrity.types';
+import { FILE_HASHES } from './registry/models-hashes.registry';
 
 @Injectable()
 export class ModelsService implements OnModuleInit {
   private readonly logger = new Logger(ModelsService.name);
   private cache: ModelFile[] = [];
 
-  constructor(private readonly paths: PathsConfig) {}
+  constructor(private readonly paths: PathsConfig) { }
 
   async onModuleInit(): Promise<void> {
     await this.ensureModelsDir();
@@ -357,6 +357,8 @@ export class ModelsService implements OnModuleInit {
       const stat = await fs.stat(absolutePath);
       const name = path.basename(entry.name, ext);
       const { arch, role } = this.classify(relativePath);
+      const allArches = this.getArchesForFile(relativePath);
+      const sharedWith = allArches.filter(a => a !== arch);
 
       results.push({
         id: relativePath,
@@ -369,6 +371,7 @@ export class ModelsService implements OnModuleInit {
         sizeMb: Math.round((stat.size / 1024 / 1024) * 10) / 10,
         arch,
         role,
+        sharedWith,
         type: ROLE_TO_TYPE[role],
         modifiedAt: stat.mtime,
       });

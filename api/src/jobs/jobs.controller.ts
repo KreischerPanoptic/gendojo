@@ -67,8 +67,18 @@ export class JobsController {
           required: ['train', 'datasetRef'],
           properties: {
             train: {
-              $ref: '#/components/schemas/TrainTomlDto',
-              description: 'Arch-discriminated training config',
+              type: 'object',
+              description:
+                'Arch-discriminated training config. Set arch to one of: ' +
+                'sd1, sd2, sdxl, flux, chroma, sd3, anima, lumina, hunyuan. ' +
+                'Use POST /toml/validate/train to validate before submitting.',
+              required: ['arch'],
+              properties: {
+                arch: {
+                  type: 'string',
+                  enum: ['sd1', 'sd2', 'sdxl', 'flux', 'chroma', 'sd3', 'anima', 'lumina', 'hunyuan'],
+                },
+              },
             },
             datasetRef: {
               type: 'string',
@@ -94,7 +104,19 @@ export class JobsController {
                 flip_aug: { type: 'boolean', example: false },
               },
             },
-            sampleImages: { $ref: '#/components/schemas/SampleImagesConfig' },
+            sampleImages: {
+              type: 'object',
+              nullable: true,
+              description: 'Optional sample image config — generates preview images during training.',
+              properties: {
+                prompts: { type: 'array', items: { type: 'object' } },
+                activationToken: { type: 'string' },
+                captionStyle: { type: 'string', enum: ['natural', 'tags'] },
+                every_n_epochs: { type: 'integer' },
+                every_n_steps: { type: 'integer' },
+                sampler: { type: 'string' },
+              },
+            }
           },
         },
         {
@@ -102,9 +124,41 @@ export class JobsController {
           description: 'Provide a full inline dataset.toml definition',
           required: ['train', 'dataset'],
           properties: {
-            train: { $ref: '#/components/schemas/TrainTomlDto' },
-            dataset: { $ref: '#/components/schemas/DatasetTomlDto' },
-            sampleImages: { $ref: '#/components/schemas/SampleImagesConfig' },
+            train: {
+              type: 'object',
+              description:
+                'Arch-discriminated training config. Set arch to one of: ' +
+                'sd1, sd2, sdxl, flux, chroma, sd3, anima, lumina, hunyuan. ' +
+                'Use POST /toml/validate/train to validate before submitting.',
+              required: ['arch'],
+              properties: {
+                arch: {
+                  type: 'string',
+                  enum: ['sd1', 'sd2', 'sdxl', 'flux', 'chroma', 'sd3', 'anima', 'lumina', 'hunyuan'],
+                },
+              },
+            },
+            dataset: {
+              type: 'object',
+              description: 'Full DatasetTomlDto. Use POST /toml/preview/dataset to preview.',
+              required: ['datasets'],
+              properties: {
+                datasets: { type: 'array', minItems: 1 },
+              },
+            },
+            sampleImages: {
+              type: 'object',
+              nullable: true,
+              description: 'Optional sample image config — generates preview images during training.',
+              properties: {
+                prompts: { type: 'array', items: { type: 'object' } },
+                activationToken: { type: 'string' },
+                captionStyle: { type: 'string', enum: ['natural', 'tags'] },
+                every_n_epochs: { type: 'integer' },
+                every_n_steps: { type: 'integer' },
+                sampler: { type: 'string' },
+              },
+            },
           },
         },
       ],

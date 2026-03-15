@@ -2,7 +2,7 @@
 // Shared / common option types
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { ModelArchitecture } from "src/models/entities/models.types";
+import { ModelArchitecture } from "src/models/types/models.types";
 
 export type SaveFormat = 'safetensors' | 'ckpt' | 'pt' | 'diffusers' | 'diffusers_safetensors';
 export type MixedPrecision = 'no' | 'fp16' | 'bf16';

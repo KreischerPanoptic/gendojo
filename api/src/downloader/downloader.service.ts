@@ -14,8 +14,8 @@ import { randomUUID } from 'crypto';
 
 import { PathsConfig } from '../config/paths.config';
 import { ModelsService } from '../models/models.service';
-import { ARCH_ROLE_DIR } from '../models/entities/models.constants';
-import type { ModelArchitecture, ModelRole } from '../models/entities/models.types';
+import { ARCH_ROLE_DIR } from '../models/constants/models.constants';
+import type { ModelArchitecture, ModelRole } from '../models/types/models.types';
 import type { DownloadJob, DownloadSource } from './types/downloader.types';
 import { StartDownloadDto } from './dto/start-download.dto';
 import { findPreset, getPresetsByArch } from './presets/download.presets';

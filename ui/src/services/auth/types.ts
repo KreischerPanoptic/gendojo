@@ -1,17 +1,8 @@
-// ─────────────────────────────────────────────────────────────────────────────
-// Requests
-// ─────────────────────────────────────────────────────────────────────────────
-
-export interface LoginRequest {
-  username: string
-  password: string
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Responses
-// ─────────────────────────────────────────────────────────────────────────────
-
-export interface LoginResponse {
-  accessToken: string
-  username: string
-}
+export type {
+ LoginDto,
+ LoginResponseDto,
+ MfaTokenDto,
+ MfaEnableResponseDto,
+ MfaSetupResponseDto,
+ MfaVerifyResponseDto
+} from '@api/types.gen'

@@ -53,11 +53,8 @@ const DB_PATH =
         db.pragma('busy_timeout = 5000');
       },
     }),
-
-    // SettingsModule must come before ConfigModule — ConfigModule imports SettingsModule
     SettingsModule,
     ConfigModule,
-
     JobsModule,
     OutputsModule,
     PresetsModule,

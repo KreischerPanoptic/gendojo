@@ -1,65 +1,51 @@
-import { apiClient } from '@services/client'
 import type {
-  DownloadJob,
-  ModelPreset,
-  StartDownloadRequest,
+  DownloadJobDto,
+  PresetDto,
+  PresetsGroupedDto,
+  StartDownloadDto,
 } from './types'
 import type { ModelArchitecture } from '@services/models'
+import { downloaderControllerCancel, downloaderControllerGetOne, downloaderControllerList, downloaderControllerPresets, downloaderControllerStart } from '@api/sdk.gen'
 
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const downloaderApi = {
-  /**
-   * GET /downloader/presets
-   * Returns all presets grouped by arch: Record<arch, ModelPreset[]>
-   *
-   * GET /downloader/presets?arch=flux
-   * Returns flat array for a specific arch: ModelPreset[]
-   */
-  listPresets: async (): Promise<Record<string, ModelPreset[]>> => {
-    const { data } = await apiClient.get<Record<string, ModelPreset[]>>('/downloader/presets')
-    return data
-  },
+  listPresets: (): Promise<PresetsGroupedDto | PresetDto[]> =>
+    downloaderControllerPresets().then(r => r.data ?? []),
 
-  listPresetsByArch: async (arch: ModelArchitecture): Promise<ModelPreset[]> => {
-    const { data } = await apiClient.get<ModelPreset[]>('/downloader/presets', {
-      params: { arch },
-    })
-    return data
-  },
+  listPresetsByArch: (arch: ModelArchitecture): Promise<PresetsGroupedDto | PresetDto[]> => 
+    downloaderControllerPresets(
+      {
+        query: { arch: arch }
+      }
+    ).then(r => r.data ?? []),
 
-  /**
-   * GET /downloader
-   * All jobs, newest first.
-   */
-  listJobs: async (): Promise<DownloadJob[]> => {
-    const { data } = await apiClient.get<DownloadJob[]>('/downloader')
-    return data
-  },
+  listJobs: (): Promise<DownloadJobDto[]> =>
+    downloaderControllerList().then(r => r.data ?? []),
 
-  /**
-   * GET /downloader/:id
-   */
-  getJob: async (id: string): Promise<DownloadJob> => {
-    const { data } = await apiClient.get<DownloadJob>(`/downloader/${id}`)
-    return data
-  },
+  getJob: (id: string): Promise<DownloadJobDto> => 
+    downloaderControllerGetOne(
+      {
+        path: { id }
+      }
+    ).then(r => {
+      if (!r.data) throw new Error(`Job with id ${id} not found.`)
+      return r.data
+    }),
 
-  /**
-   * POST /downloader
-   * Start a new download. Returns the job immediately.
-   */
-  start: async (body: StartDownloadRequest): Promise<DownloadJob> => {
-    const { data } = await apiClient.post<DownloadJob>('/downloader', body)
-    return data
-  },
+  start: (body: StartDownloadDto): Promise<DownloadJobDto> => 
+    downloaderControllerStart({ body }).then(r => {
+      if (!r.data) throw new Error(`Can't start job.`)
+      return r.data
+    }),
 
-  /**
-   * DELETE /downloader/:id
-   * Cancel an in-progress or pending download.
-   */
-  cancel: async (id: string): Promise<DownloadJob> => {
-    const { data } = await apiClient.delete<DownloadJob>(`/downloader/${id}`)
-    return data
-  },
+  cancel: (id: string): Promise<DownloadJobDto> => 
+    downloaderControllerCancel(
+      {
+        path: { id }
+      }
+    ).then(r => {
+      if (!r.data) throw new Error(`Job with id ${id} not found.`)
+      return r.data
+    }),
 }

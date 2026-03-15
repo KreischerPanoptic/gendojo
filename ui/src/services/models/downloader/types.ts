@@ -1,86 +1,36 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// Mirror of api/src/downloader/downloader.types.ts
+// Types from generated OpenAPI schema
 // ─────────────────────────────────────────────────────────────────────────────
 
-import type { ModelArchitecture, ModelRole } from '@services/models'
+import type { DownloadJobDto } from '@api/types.gen'
 
-export type DownloadSource = 'huggingface' | 'civitai' | 'direct'
-
-export type DownloadStatus =
-  | 'pending'
-  | 'downloading'
-  | 'completed'
-  | 'failed'
-  | 'cancelled'
-
-export interface DownloadJob {
-  id: string
-  source: DownloadSource
-  url: string
-  arch: ModelArchitecture
-  role: ModelRole
-  filename: string
-  destination: string
-  status: DownloadStatus
-  bytesDownloaded: number
-  /** 0 until Content-Length is received from server */
-  bytesTotal: number
-  /** 0–100; -1 when total is unknown (chunked transfer) */
-  progressPercent: number
-  createdAt: string
-  completedAt?: string
-  error?: string
-}
-
-export interface ModelPreset {
-  id: string
-  name: string
-  arch: ModelArchitecture
-  role: ModelRole
-  source: DownloadSource
-  hfRepoId?: string
-  hfFilename?: string
-  filename: string
-  sizeMb?: number
-  requiresHfToken: boolean
-  description?: string
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Request bodies
-// ─────────────────────────────────────────────────────────────────────────────
-
-export interface StartDownloadByPreset {
-  presetId: string
-}
-
-export interface StartDownloadByUrl {
-  url: string
-  arch: ModelArchitecture
-  role: ModelRole
-  filename?: string
-}
-
-export type StartDownloadRequest = StartDownloadByPreset | StartDownloadByUrl
+export type {
+  PresetDto,
+  PresetsGroupedDto,
+  DownloadJobDto,
+  StartDownloadDto
+} from '@api/types.gen'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Display helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
-export const STATUS_COLOR: Record<DownloadStatus, string> = {
+export const STATUS_COLOR: Record<DownloadJobDto['status'], string> = {
   pending:     'gray',
   downloading: 'blue',
   completed:   'teal',
   failed:      'red',
   cancelled:   'orange',
+  skipped:     'slate'
 }
 
-export const STATUS_LABEL: Record<DownloadStatus, string> = {
+export const STATUS_LABEL: Record<DownloadJobDto['status'], string> = {
   pending:     'Pending',
   downloading: 'Downloading',
   completed:   'Done',
   failed:      'Failed',
   cancelled:   'Cancelled',
+  skipped:     'Skipped'
 }
 
 export function formatBytes(bytes: number): string {

@@ -1,19 +1,55 @@
-import { apiClient } from '@services/client'
+/**
+ * Datasets API service
+ *
+ * Split into two sections:
+ *
+ *  1. REST calls via generated SDK (datasetsController* functions)
+ *     — fully typed, no boilerplate, errors handled uniformly
+ *
+ *  2. XHR-based uploads — must use XMLHttpRequest because the Fetch API
+ *     and axios do not expose upload progress (onprogress) in a standard way.
+ *     The chunked upload path is also here: files >= CHUNK_THRESHOLD are
+ *     automatically split into parallel 5 MB chunks.
+ *
+ *  3. URL builders — for <img src> and <a href> (SkipAuth endpoints)
+ */
+
+import {
+  datasetsControllerList,
+  datasetsControllerGetOne,
+  datasetsControllerGetCaption,
+  datasetsControllerUpsertCaption,
+  datasetsControllerDeleteCaption,
+  datasetsControllerPrependToken,
+  datasetsControllerGetMeta,
+  datasetsControllerUpdateMeta,
+  datasetsControllerDetectCaptionType,
+  datasetsControllerDeleteImage,
+  datasetsControllerRemove,
+  datasetsControllerInitChunkedUpload,
+  datasetsControllerCompleteChunkedUpload,
+} from '@api/sdk.gen'
+
 import type {
-  CaptionStats,
-  CaptionTypeDetectionResult,
+  DatasetSummary,
   DatasetDetail,
   DatasetMeta,
   DatasetMetaUpdate,
-  DatasetSummary,
-  PrependMode,
-  PrependTokenResult,
   UploadDatasetResponse,
+  GetCaptionResponse,
+  UpsertCaptionResponse,
+  DeleteCaptionResponse,
+  PrependTokenResult,
+  CaptionTypeDetectionResult,
+  DeleteImageResponse,
+  DeleteDatasetResponse,
+  ReplaceImageResponse,
+  PrependMode,
   UploadProgressEvent,
 } from './types'
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Internal helpers
+// Shared XHR helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
 const getToken = (): string | null => {
@@ -32,7 +68,12 @@ const getBaseURL = (): string =>
     : '') + '/api'
 
 /**
- * Generic XHR upload with optional progress tracking.
+ * Generic XHR multipart upload with optional progress tracking.
+ *
+ * We use XHR here — not axios and not fetch — because:
+ *   - axios wraps XHR but doesn't expose upload.onprogress from the outside
+ *   - fetch has no upload progress API at all (ReadableRequest body doesn't expose it)
+ *   - XHR's upload.onprogress is the only reliable cross-browser way
  */
 function xhrUpload<T>(
   method: 'POST' | 'PUT',
@@ -52,8 +93,8 @@ function xhrUpload<T>(
         if (e.lengthComputable) {
           onProgress({
             percent: Math.round((e.loaded / e.total) * 100),
-            loaded: e.loaded,
-            total: e.total,
+            loaded:  e.loaded,
+            total:   e.total,
           })
         }
       })
@@ -68,7 +109,7 @@ function xhrUpload<T>(
         try {
           const body = JSON.parse(xhr.responseText) as { message?: string }
           if (body.message) message = body.message
-        } catch { /* ignore */ }
+        } catch { /* use default message */ }
         reject(new Error(message))
       }
     })
@@ -81,21 +122,15 @@ function xhrUpload<T>(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Chunked upload constants
+// Chunked upload (internal)
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** Файлы >= этого порога уходят через chunked upload */
+/** Files >= this threshold use the chunked upload path automatically */
 const CHUNK_THRESHOLD   = 10 * 1024 * 1024   // 10 MB
-
-/** Размер одного чанка */
+/** Each chunk is 5 MB */
 const CHUNK_SIZE        = 5  * 1024 * 1024   // 5 MB
-
-/** Сколько чанков грузим параллельно */
+/** Upload N chunks in parallel */
 const CHUNK_CONCURRENCY = 4
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Chunked ZIP upload (internal)
-// ─────────────────────────────────────────────────────────────────────────────
 
 async function uploadZipChunked(
   name: string,
@@ -103,29 +138,17 @@ async function uploadZipChunked(
   onProgress?: (event: UploadProgressEvent) => void,
   overwrite = true,
 ): Promise<UploadDatasetResponse> {
-
-  // 1. Инициализируем сессию
-  const token = getToken()
   const baseURL = getBaseURL()
 
-  const initRes = await fetch(`${baseURL}/datasets/upload/chunked/init`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    },
-    body: JSON.stringify({ name }),
-  })
-  if (!initRes.ok) {
-    let msg = `Chunked init failed: HTTP ${initRes.status}`
-    try { const b = await initRes.json() as { message?: string }; if (b.message) msg = b.message } catch {}
-    throw new Error(msg)
-  }
-  const { uploadId } = await initRes.json() as { uploadId: string }
+  // 1. Init session via SDK (no body needed, just auth)
+  const { uploadId } = await datasetsControllerInitChunkedUpload()
+    .then(r => {
+      if (!r.data) throw new Error('Chunked init failed: no response data')
+      return r.data
+    })
 
   const totalChunks = Math.ceil(file.size / CHUNK_SIZE)
-
-  // loadedBytes[i] — сколько байт чанка i уже доехало на сервер
+  // Track per-chunk bytes for aggregate progress reporting
   const loadedBytes = new Array<number>(totalChunks).fill(0)
 
   const reportProgress = onProgress
@@ -133,22 +156,21 @@ async function uploadZipChunked(
         const totalLoaded = loadedBytes.reduce((s, v) => s + v, 0)
         onProgress({
           percent: Math.round((totalLoaded / file.size) * 100),
-          loaded: Math.round(totalLoaded),
-          total: file.size,
+          loaded:  Math.round(totalLoaded),
+          total:   file.size,
         })
       }
     : null
 
-  // 2. Грузим чанки батчами по CHUNK_CONCURRENCY параллельно
+  // 2. Upload chunks in batches of CHUNK_CONCURRENCY
   const uploadChunk = (index: number): Promise<void> => {
-    const start = index * CHUNK_SIZE
-    const end = Math.min(start + CHUNK_SIZE, file.size)
-    const chunkBlob = file.slice(start, end)
+    const start      = index * CHUNK_SIZE
+    const end        = Math.min(start + CHUNK_SIZE, file.size)
     const chunkBytes = end - start
 
     const formData = new FormData()
-    formData.append('file', new File([chunkBlob], `chunk-${index}`))
-    formData.append('uploadId', uploadId)
+    formData.append('file',       new File([file.slice(start, end)], `chunk-${index}`))
+    formData.append('uploadId',   uploadId)
     formData.append('chunkIndex', String(index))
 
     return xhrUpload<void>(
@@ -156,75 +178,133 @@ async function uploadZipChunked(
       `${baseURL}/datasets/upload/chunked/chunk`,
       formData,
       reportProgress
-        ? (e) => {
-            loadedBytes[index] = (e.loaded / e.total) * chunkBytes
-            reportProgress()
-          }
+        ? (e) => { loadedBytes[index] = (e.loaded / e.total) * chunkBytes; reportProgress() }
         : undefined,
     )
   }
 
   for (let i = 0; i < totalChunks; i += CHUNK_CONCURRENCY) {
-    const batchSize = Math.min(CHUNK_CONCURRENCY, totalChunks - i)
+    const batchEnd = Math.min(i + CHUNK_CONCURRENCY, totalChunks)
     await Promise.all(
-      Array.from({ length: batchSize }, (_, k) => uploadChunk(i + k)),
+      Array.from({ length: batchEnd - i }, (_, k) => uploadChunk(i + k)),
     )
   }
 
-  // Репортим 100% на сетевой части перед финализацией сервером
+  // Report 100% on the network part before server-side assembly
   onProgress?.({ percent: 100, loaded: file.size, total: file.size })
 
-  // 3. Финализируем — сервер собирает чанки и извлекает ZIP
-  const qs = overwrite ? '' : '?overwrite=false'
-  const token2 = getToken() // токен мог обновиться
-  const completeRes = await fetch(`${baseURL}/datasets/upload/chunked/complete${qs}`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      ...(token2 ? { Authorization: `Bearer ${token2}` } : {}),
-    },
-    body: JSON.stringify({ uploadId, name, totalChunks }),
+  // 3. Finalise via SDK
+  const result = await datasetsControllerCompleteChunkedUpload({
+    query: { overwrite: overwrite},
+    body:  { uploadId, name, totalChunks },
   })
-
-  if (!completeRes.ok) {
-    let msg = `Chunked complete failed: HTTP ${completeRes.status}`
-    try { const b = await completeRes.json() as { message?: string }; if (b.message) msg = b.message } catch {}
-    throw new Error(msg)
-  }
-
-  return completeRes.json() as Promise<UploadDatasetResponse>
+  if (!result.data) throw new Error('Chunked complete failed: no response data')
+  return result.data
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// API
+// Public API
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const datasetsApi = {
 
-  // ── List / detail ────────────────────────────────────────────────────────
+  // ── List / detail (generated SDK) ────────────────────────────────────────
 
-  list: async (): Promise<DatasetSummary[]> => {
-    const { data } = await apiClient.get<DatasetSummary[]>('/datasets')
-    return data
-  },
+  list: (): Promise<DatasetSummary[]> =>
+    datasetsControllerList().then(r => r.data ?? []),
 
-  getOne: async (name: string): Promise<DatasetDetail> => {
-    const { data } = await apiClient.get<DatasetDetail>(
-      `/datasets/${encodeURIComponent(name)}`,
-    )
-    return data
-  },
+  getOne: (name: string): Promise<DatasetDetail> =>
+    datasetsControllerGetOne({ path: { name } })
+      .then(r => {
+        if (!r.data) throw new Error(`Dataset not found: ${name}`)
+        return r.data
+      }),
 
-  // ── Upload ───────────────────────────────────────────────────────────────
+  // ── Captions (generated SDK) ──────────────────────────────────────────────
+
+  getCaption: (datasetName: string, imageName: string): Promise<GetCaptionResponse> =>
+    datasetsControllerGetCaption({ path: { name: datasetName, image: imageName } })
+      .then(r => r.data ?? { caption: null, captionStats: null }),
+
+  upsertCaption: (
+    datasetName: string,
+    imageName: string,
+    caption: string,
+  ): Promise<UpsertCaptionResponse> =>
+    datasetsControllerUpsertCaption({
+      path: { name: datasetName, image: imageName },
+      body: { caption },
+    }).then(r => {
+      if (!r.data) throw new Error('Upsert caption failed')
+      return r.data
+    }),
+
+  deleteCaption: (datasetName: string, imageName: string): Promise<DeleteCaptionResponse> =>
+    datasetsControllerDeleteCaption({ path: { name: datasetName, image: imageName } })
+      .then(r => r.data ?? { deleted: false }),
+
+  prependToken: (
+    datasetName: string,
+    token: string,
+    mode: PrependMode,
+    skipExisting: boolean,
+  ): Promise<PrependTokenResult> =>
+    datasetsControllerPrependToken({
+      path: { name: datasetName },
+      body: { token, mode, skipExisting },
+    }).then(r => {
+      if (!r.data) throw new Error('Prepend token failed')
+      return r.data
+    }),
+
+  // ── Metadata (generated SDK) ──────────────────────────────────────────────
+
+  getMeta: (datasetName: string): Promise<DatasetMeta | null> =>
+    datasetsControllerGetMeta({ path: { name: datasetName } })
+      .then(r => r.data ?? null),
+
+  updateMeta: (datasetName: string, update: DatasetMetaUpdate): Promise<DatasetMeta> =>
+    datasetsControllerUpdateMeta({
+      path: { name: datasetName },
+      body: update,
+    }).then(r => {
+      if (!r.data) throw new Error('Update meta failed')
+      return r.data
+    }),
+
+  detectCaptionType: (datasetName: string): Promise<CaptionTypeDetectionResult> =>
+    datasetsControllerDetectCaptionType({ path: { name: datasetName } })
+      .then(r => {
+        if (!r.data) throw new Error('Caption type detection failed')
+        return r.data
+      }),
+
+  // ── Delete (generated SDK) ────────────────────────────────────────────────
+
+  deleteImage: (datasetName: string, filename: string): Promise<DeleteImageResponse> =>
+    datasetsControllerDeleteImage({ path: { name: datasetName, filename } })
+      .then(r => {
+        if (!r.data) throw new Error(`Delete image failed: ${filename}`)
+        return r.data
+      }),
+
+  remove: (name: string): Promise<DeleteDatasetResponse> =>
+    datasetsControllerRemove({ path: { name } })
+      .then(r => {
+        if (!r.data) throw new Error(`Remove dataset failed: ${name}`)
+        return r.data
+      }),
+
+  // ── Uploads (XHR — progress tracking required) ───────────────────────────
 
   /**
-   * Загрузка ZIP-архива.
-   * Файлы >= CHUNK_THRESHOLD (10 MB) автоматически идут через chunked upload:
-   *   - разбивка на чанки по 5 MB
-   *   - 4 чанка параллельно
-   *   - progress отражает реальный прогресс передачи
+   * Upload a ZIP archive.
    *
-   * Файлы < 10 MB — одним запросом как раньше.
+   * Files >= 10 MB are automatically split into 5 MB chunks and uploaded
+   * 4 at a time in parallel (chunked upload path).
+   * Files < 10 MB use a single POST request.
+   *
+   * onProgress reports aggregate bytes across all chunks.
    */
   uploadZip: (
     name: string,
@@ -232,12 +312,10 @@ export const datasetsApi = {
     onProgress?: (event: UploadProgressEvent) => void,
     overwrite = true,
   ): Promise<UploadDatasetResponse> => {
-    // Крупные файлы — chunked parallel upload
     if (file.size >= CHUNK_THRESHOLD) {
       return uploadZipChunked(name, file, onProgress, overwrite)
     }
 
-    // Мелкие файлы — простой единый запрос
     const formData = new FormData()
     formData.append('file', file)
     formData.append('name', name)
@@ -250,28 +328,36 @@ export const datasetsApi = {
     )
   },
 
+  /**
+   * Upload individual image/caption files to an existing dataset.
+   *
+   * All files are uploaded in parallel. Progress is aggregated across all files.
+   * Returns the response from the last completed upload.
+   */
   uploadFiles: (
     name: string,
     files: File[],
     onProgress?: (event: UploadProgressEvent) => void,
   ): Promise<UploadDatasetResponse> => {
-    const loadedMap = new Map<number, number>()
+    const loadedMap  = new Map<number, number>()
     const totalBytes = files.reduce((s, f) => s + f.size, 0)
 
     const uploadOne = (file: File, index: number): Promise<UploadDatasetResponse> => {
       const formData = new FormData()
       formData.append('file', file)
+
       const perFileProgress = onProgress && totalBytes > 0
         ? (e: UploadProgressEvent) => {
             loadedMap.set(index, (e.loaded / e.total) * file.size)
             const totalLoaded = [...loadedMap.values()].reduce((s, v) => s + v, 0)
             onProgress({
               percent: Math.round((totalLoaded / totalBytes) * 100),
-              loaded: Math.round(totalLoaded),
-              total: totalBytes,
+              loaded:  Math.round(totalLoaded),
+              total:   totalBytes,
             })
           }
         : undefined
+
       return xhrUpload<UploadDatasetResponse>(
         'POST',
         `${getBaseURL()}/datasets/upload/file?name=${encodeURIComponent(name)}`,
@@ -280,23 +366,23 @@ export const datasetsApi = {
       )
     }
 
-    return Promise.all(files.map((f, i) => uploadOne(f, i))).then(
-      (results) => results[results.length - 1],
-    )
+    return Promise.all(files.map((f, i) => uploadOne(f, i)))
+      .then(results => results[results.length - 1]!)
   },
 
   /**
-   * PUT /datasets/:name/images/:filename
+   * Replace an existing image in-place. Caption file is preserved.
+   * Extension of the uploaded file must match the target filename.
    */
   replaceImage: (
     datasetName: string,
     filename: string,
     file: File,
     onProgress?: (event: UploadProgressEvent) => void,
-  ): Promise<{ path: string }> => {
+  ): Promise<ReplaceImageResponse> => {
     const formData = new FormData()
     formData.append('file', file)
-    return xhrUpload<{ path: string }>(
+    return xhrUpload<ReplaceImageResponse>(
       'PUT',
       `${getBaseURL()}/datasets/${encodeURIComponent(datasetName)}/images/${encodeURIComponent(filename)}`,
       formData,
@@ -304,103 +390,19 @@ export const datasetsApi = {
     )
   },
 
-  // ── Captions ─────────────────────────────────────────────────────────────
+  // ── URL builders (@SkipAuth endpoints) ───────────────────────────────────
 
-  getCaption: async (
-    datasetName: string,
-    imageName: string,
-  ): Promise<{ caption: string | null; captionStats: CaptionStats | null }> => {
-    const { data } = await apiClient.get<{ caption: string | null; captionStats: CaptionStats | null }>(
-      `/datasets/${encodeURIComponent(datasetName)}/captions/${encodeURIComponent(imageName)}`,
-    )
-    return data
-  },
-
-  upsertCaption: async (
-    datasetName: string,
-    imageName: string,
-    caption: string,
-  ): Promise<{ captionPath: string; captionStats: CaptionStats }> => {
-    const { data } = await apiClient.post<{ captionPath: string; captionStats: CaptionStats }>(
-      `/datasets/${encodeURIComponent(datasetName)}/captions/${encodeURIComponent(imageName)}`,
-      { caption },
-    )
-    return data
-  },
-
-  deleteCaption: async (
-    datasetName: string,
-    imageName: string,
-  ): Promise<{ deleted: boolean }> => {
-    const { data } = await apiClient.delete<{ deleted: boolean }>(
-      `/datasets/${encodeURIComponent(datasetName)}/captions/${encodeURIComponent(imageName)}`,
-    )
-    return data
-  },
-
-  prependToken: async (
-    datasetName: string,
-    token: string,
-    mode: PrependMode,
-    skipExisting: boolean,
-  ): Promise<PrependTokenResult> => {
-    const { data } = await apiClient.post<PrependTokenResult>(
-      `/datasets/${encodeURIComponent(datasetName)}/captions/prepend-token`,
-      { token, mode, skipExisting },
-    )
-    return data
-  },
-
-  // ── Metadata ─────────────────────────────────────────────────────────────
-
-  getMeta: async (datasetName: string): Promise<DatasetMeta | null> => {
-    const { data } = await apiClient.get<DatasetMeta | null>(
-      `/datasets/${encodeURIComponent(datasetName)}/meta`,
-    )
-    return data
-  },
-
-  updateMeta: async (
-    datasetName: string,
-    update: DatasetMetaUpdate,
-  ): Promise<DatasetMeta> => {
-    const { data } = await apiClient.patch<DatasetMeta>(
-      `/datasets/${encodeURIComponent(datasetName)}/meta`,
-      update,
-    )
-    return data
-  },
-
-  detectCaptionType: async (
-    datasetName: string,
-  ): Promise<CaptionTypeDetectionResult> => {
-    const { data } = await apiClient.post<CaptionTypeDetectionResult>(
-      `/datasets/${encodeURIComponent(datasetName)}/detect-caption-type`,
-    )
-    return data
-  },
-
-  // ── Delete ───────────────────────────────────────────────────────────────
-
-  deleteImage: async (
-    datasetName: string,
-    filename: string,
-  ): Promise<{ deleted: string[]; captionDeleted: boolean }> => {
-    const { data } = await apiClient.delete<{ deleted: string[]; captionDeleted: boolean }>(
-      `/datasets/${encodeURIComponent(datasetName)}/images/${encodeURIComponent(filename)}`,
-    )
-    return data
-  },
-
-  remove: async (name: string): Promise<void> => {
-    await apiClient.delete(`/datasets/${encodeURIComponent(name)}`)
-  },
-
-  // ── Utility ──────────────────────────────────────────────────────────────
-
+  /**
+   * Direct URL for an image — safe to use in <img src>.
+   * The endpoint has @SkipAuth so no Authorization header is needed.
+   */
   getImageUrl: (datasetName: string, filename: string): string =>
     `${getBaseURL()}/datasets/${encodeURIComponent(datasetName)}/images/${encodeURIComponent(filename)}`,
 
+  /**
+   * Direct URL to download the entire dataset as a zip archive.
+   * The endpoint has @SkipAuth so no Authorization header is needed.
+   */
   getExportUrl: (datasetName: string): string =>
     `${getBaseURL()}/datasets/${encodeURIComponent(datasetName)}/export`,
 }

@@ -1,7 +1,7 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { downloaderApi } from './api'
 import { downloaderQueryKeys } from './keys'
-import type { StartDownloadRequest } from './types'
+import type { StartDownloadDto } from '@api/types.gen'
 
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -9,7 +9,7 @@ export const useStartDownload = () => {
   const queryClient = useQueryClient()
 
   return useMutation({
-    mutationFn: (body: StartDownloadRequest) => downloaderApi.start(body),
+    mutationFn: (body: StartDownloadDto) => downloaderApi.start(body),
 
     onSuccess: () => {
       // Immediately refetch jobs so the new entry appears

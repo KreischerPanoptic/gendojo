@@ -4,8 +4,8 @@
 // Returns null when arch is 'unknown'.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { ARCH_ROLE_DIR } from "src/models/entities/models.constants";
-import { ModelArchitecture, ModelRole } from "src/models/entities/models.types";
+import { ARCH_ROLE_DIR } from "src/models/constants/models.constants";
+import { ModelArchitecture, ModelRole } from "src/models/types/models.types";
 
 export function resolveTargetDir(
   arch: ModelArchitecture,

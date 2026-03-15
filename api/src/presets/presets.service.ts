@@ -1,8 +1,9 @@
-import { Injectable, Logger, NotFoundException, OnModuleInit } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
 import { randomUUID } from 'crypto';
-import * as fs from 'fs';
-import * as path from 'path';
 
+import { TrainingPreset as TrainingPresetEntity } from './entity/preset.entity';
 import { ALL_PRESETS } from './data/presets.data';
 import type {
   TrainingPreset,
@@ -10,40 +11,17 @@ import type {
   PresetsGrouped,
   CreatePresetDto,
   UpdatePresetDto,
-} from './entities/presets.types';
-import type { ModelArchitecture } from '../models/entities/models.types';
-
-// ─────────────────────────────────────────────────────────────────────────────
-// File location
-//
-// Follows the same convention as settings.json — next to it in /workspace/gendojo/.
-// Override via USER_PRESETS_FILE env var for testing.
-// ─────────────────────────────────────────────────────────────────────────────
-
-const USER_PRESETS_FILE =
-  process.env['USER_PRESETS_FILE'] ||
-  path.resolve(
-    process.env['WORKSPACE_ROOT'] ?? '/workspace/gendojo',
-    'user-presets.json',
-  );
-
-// ─────────────────────────────────────────────────────────────────────────────
-// PresetsService
-// ─────────────────────────────────────────────────────────────────────────────
+} from './types/presets.types';
+import type { ModelArchitecture } from '../models/types/models.types';
 
 @Injectable()
-export class PresetsService implements OnModuleInit {
+export class PresetsService {
   private readonly logger = new Logger(PresetsService.name);
 
-  /** In-memory user preset store. Source of truth is the JSON file on disk. */
-  private userPresets: TrainingPreset[] = [];
-
-  onModuleInit(): void {
-    this.userPresets = this.loadUserPresets();
-    this.logger.log(
-      `Loaded ${this.userPresets.length} user preset(s) from ${USER_PRESETS_FILE}`,
-    );
-  }
+  constructor(
+    @InjectRepository(TrainingPresetEntity)
+    private readonly repo: Repository<TrainingPresetEntity>,
+  ) {}
 
   // ── Read ───────────────────────────────────────────────────────────────────
 
@@ -51,153 +29,158 @@ export class PresetsService implements OnModuleInit {
    * Return all presets (system + user), optionally filtered.
    * System presets are always listed first, then user presets.
    */
-  list(filters?: { arch?: ModelArchitecture; tier?: PresetTier }): TrainingPreset[] {
-    const all = [...this.systemPresets(), ...this.userPresets];
-    let result = all;
-    if (filters?.arch) result = result.filter(p => p.arch === filters.arch);
-    if (filters?.tier) result = result.filter(p => p.tier === filters.tier);
-    return result;
+  async list(filters?: { arch?: ModelArchitecture; tier?: PresetTier }): Promise<TrainingPreset[]> {
+    let system = this.systemPresets();
+    let user   = await this.loadUserPresets();
+
+    if (filters?.arch) {
+      system = system.filter(p => p.arch === filters.arch);
+      user   = user.filter(p => p.arch === filters.arch);
+    }
+    if (filters?.tier) {
+      system = system.filter(p => p.tier === filters.tier);
+      user   = user.filter(p => p.tier === filters.tier);
+    }
+
+    return [...system, ...user];
   }
 
   /**
    * Return all presets grouped by architecture.
-   * Within each arch: system first, then user.
+   * Within each arch: system presets first, then user presets.
    */
-  grouped(arch?: ModelArchitecture): PresetsGrouped {
-    const source = this.list(arch ? { arch } : undefined);
-    return source.reduce<PresetsGrouped>((acc, preset) => {
+  async grouped(arch?: ModelArchitecture): Promise<PresetsGrouped> {
+    const presets = await this.list(arch ? { arch } : undefined);
+    return presets.reduce<PresetsGrouped>((acc, preset) => {
       if (!acc[preset.arch]) acc[preset.arch] = [];
       acc[preset.arch]!.push(preset);
       return acc;
     }, {});
   }
 
-  /** Lookup by stable ID — searches system presets first, then user */
-  getById(id: string): TrainingPreset | undefined {
-    return (
-      this.systemPresets().find(p => p.id === id) ??
-      this.userPresets.find(p => p.id === id)
-    );
+  /** Look up by stable ID — searches system presets first, then DB */
+  async getById(id: string): Promise<TrainingPreset | null> {
+    const system = this.systemPresets().find(p => p.id === id);
+    if (system) return system;
+
+    const dbId = this.stripUserPrefix(id);
+    if (!dbId) return null;
+
+    const record = await this.repo.findOneBy({ id: dbId });
+    return record ? this.entityToPreset(record) : null;
   }
 
-  /** Lookup by arch + tier — system presets take priority */
-  getByArchTier(arch: ModelArchitecture, tier: PresetTier): TrainingPreset | undefined {
-    return (
-      this.systemPresets().find(p => p.arch === arch && p.tier === tier) ??
-      this.userPresets.find(p => p.arch === arch && p.tier === tier)
-    );
+  /** Look up by arch + tier — system presets take priority */
+  async getByArchTier(arch: ModelArchitecture, tier: PresetTier): Promise<TrainingPreset | null> {
+    const system = this.systemPresets().find(p => p.arch === arch && p.tier === tier);
+    if (system) return system;
+
+    const record = await this.repo.findOne({ where: { arch, tier } });
+    return record ? this.entityToPreset(record) : null;
   }
 
   // ── Write ──────────────────────────────────────────────────────────────────
 
-  /** Create and persist a new user preset. Returns the created preset. */
-  create(dto: CreatePresetDto): TrainingPreset {
-    const now = new Date().toISOString();
-    const preset: TrainingPreset = {
-      id:          `user-${randomUUID()}`,
+  /** Create and persist a new user preset. */
+  async create(dto: CreatePresetDto): Promise<TrainingPreset> {
+    const record = this.repo.create({
       arch:        dto.arch,
       tier:        dto.tier ?? 'custom',
       label:       dto.label,
       description: dto.description ?? '',
-      source:      'user',
-      createdAt:   now,
-      updatedAt:   now,
-      config:      dto.config,
-    };
+      config:      dto.config as Record<string, unknown>,
+    });
 
-    this.userPresets.push(preset);
-    this.persist();
-    this.logger.log(`Created user preset "${preset.id}" (${preset.arch} / ${preset.tier})`);
-    return preset;
+    const saved = await this.repo.save(record);
+    this.logger.log(`Created user preset "${saved.id}" (${saved.arch} / ${saved.tier})`);
+    return this.entityToPreset(saved);
   }
 
-  /** Update label, description and/or config of an existing user preset. */
-  update(id: string, dto: UpdatePresetDto): TrainingPreset {
-    const index = this.userPresets.findIndex(p => p.id === id);
-    if (index === -1) {
-      // Guard: system presets cannot be mutated
-      if (this.systemPresets().some(p => p.id === id)) {
-        throw Object.assign(
-          new Error(`System preset "${id}" cannot be modified`),
-          { statusCode: 422 },
-        );
-      }
-      throw new NotFoundException(`User preset not found: ${id}`);
-    }
-
-    const existing = this.userPresets[index]!;
-    const updated: TrainingPreset = {
-      ...existing,
-      ...(dto.label       !== undefined && { label:       dto.label }),
-      ...(dto.description !== undefined && { description: dto.description }),
-      ...(dto.config      !== undefined && { config:      { ...existing.config, ...dto.config } }),
-      updatedAt: new Date().toISOString(),
-    };
-
-    this.userPresets[index] = updated;
-    this.persist();
-    this.logger.log(`Updated user preset "${id}"`);
-    return updated;
-  }
-
-  /** Delete a user preset by ID. Throws if not found or if it's a system preset. */
-  delete(id: string): void {
+  /** Update label, description and/or config of a user preset. */
+  async update(id: string, dto: UpdatePresetDto): Promise<TrainingPreset> {
+    // System presets cannot be mutated
     if (this.systemPresets().some(p => p.id === id)) {
       throw Object.assign(
-        new Error(`System preset "${id}" cannot be deleted`),
+        new Error(`System preset "${id}" is read-only and cannot be modified`),
         { statusCode: 422 },
       );
     }
 
-    const index = this.userPresets.findIndex(p => p.id === id);
-    if (index === -1) {
+    const dbId = this.stripUserPrefix(id);
+    if (!dbId) throw new NotFoundException(`Preset not found: ${id}`);
+
+    const existing = await this.repo.findOneBy({ id: dbId });
+    if (!existing) throw new NotFoundException(`User preset not found: ${id}`);
+
+    if (dto.label       !== undefined) existing.label       = dto.label;
+    if (dto.description !== undefined) existing.description = dto.description;
+    if (dto.config      !== undefined) {
+      // Merge config — only override provided keys, preserve the rest
+      existing.config = { ...existing.config, ...dto.config } as Record<string, unknown>;
+    }
+
+    const saved = await this.repo.save(existing);
+    this.logger.log(`Updated user preset "${id}"`);
+    return this.entityToPreset(saved);
+  }
+
+  /** Delete a user preset. Throws 422 for system presets, 404 if not found. */
+  async delete(id: string): Promise<void> {
+    if (this.systemPresets().some(p => p.id === id)) {
+      throw Object.assign(
+        new Error(`System preset "${id}" is read-only and cannot be deleted`),
+        { statusCode: 422 },
+      );
+    }
+
+    const dbId = this.stripUserPrefix(id);
+    if (!dbId) throw new NotFoundException(`Preset not found: ${id}`);
+
+    const result = await this.repo.delete({ id: dbId });
+    if (!result.affected || result.affected === 0) {
       throw new NotFoundException(`User preset not found: ${id}`);
     }
 
-    this.userPresets.splice(index, 1);
-    this.persist();
     this.logger.log(`Deleted user preset "${id}"`);
   }
 
-  // ── Private ────────────────────────────────────────────────────────────────
+  // ── Private helpers ────────────────────────────────────────────────────────
 
-  /** System presets with source annotation — derived once from static data */
+  /** System presets from static data — always read from code, never from DB */
   private systemPresets(): TrainingPreset[] {
     return ALL_PRESETS.map(p => ({ ...p, source: 'system' as const }));
   }
 
-  private loadUserPresets(): TrainingPreset[] {
-    if (!fs.existsSync(USER_PRESETS_FILE)) {
-      return [];
-    }
-
-    try {
-      const raw = fs.readFileSync(USER_PRESETS_FILE, 'utf-8');
-      const parsed = JSON.parse(raw) as unknown;
-
-      if (!Array.isArray(parsed)) {
-        this.logger.warn(`${USER_PRESETS_FILE} is not an array — ignoring`);
-        return [];
-      }
-
-      // Enforce source = 'user' regardless of what's in the file
-      // (prevents shipping a settings file that grants system privileges)
-      return (parsed as TrainingPreset[]).map(p => ({ ...p, source: 'user' as const }));
-    } catch (err) {
-      this.logger.warn(
-        `Failed to parse ${USER_PRESETS_FILE} — starting with empty user presets: ${(err as Error).message}`,
-      );
-      return [];
-    }
+  /** Load all user presets from DB and map to the shared TrainingPreset interface */
+  private async loadUserPresets(): Promise<TrainingPreset[]> {
+    const records = await this.repo.find({ order: { created_at: 'ASC' } });
+    return records.map(r => this.entityToPreset(r));
   }
 
-  private persist(): void {
-    try {
-      const dir = path.dirname(USER_PRESETS_FILE);
-      fs.mkdirSync(dir, { recursive: true });
-      fs.writeFileSync(USER_PRESETS_FILE, JSON.stringify(this.userPresets, null, 2), 'utf-8');
-    } catch (err) {
-      this.logger.error(`Failed to save ${USER_PRESETS_FILE}: ${(err as Error).message}`);
-    }
+  /**
+   * Map a DB entity to the TrainingPreset interface.
+   * User preset IDs are exposed with a "user-" prefix so the UI can
+   * distinguish them from system preset IDs without a separate field.
+   */
+  private entityToPreset(entity: TrainingPresetEntity): TrainingPreset {
+    return {
+      id:          `user-${entity.id}`,
+      arch:        entity.arch as ModelArchitecture,
+      tier:        entity.tier as PresetTier,
+      label:       entity.label,
+      description: entity.description ?? '',
+      source:      'user',
+      createdAt:   entity.created_at.toISOString(),
+      updatedAt:   entity.updated_at.toISOString(),
+      config:      entity.config,
+    };
+  }
+
+  /**
+   * Strip the "user-" prefix and return the raw UUID for DB lookup.
+   * Returns null if the ID does not start with "user-".
+   */
+  private stripUserPrefix(id: string): string | null {
+    return id.startsWith('user-') ? id.slice(5) : null;
   }
 }

@@ -38,6 +38,7 @@ import {
   useUpdateMeta,
   type CaptionType,
   type DatasetMeta,
+  type UpdateMeta,
 } from '@services/datasets'
 import { useNavigate, useParams } from '@tanstack/react-router'
 import { useCallback, useEffect, useMemo, useState } from 'react'
@@ -77,7 +78,7 @@ function MetaCard({ datasetName, meta }: MetaCardProps) {
     setNotes(meta?.notes ?? '')
   }
 
-  const saveField = (field: Partial<DatasetMeta>) =>
+  const saveField = (field: UpdateMeta) =>
     updateMeta.mutate(field, {
       onSuccess: () =>
         notifications.show({

@@ -20,6 +20,7 @@ import {
   IconCircleCheck,
   IconCircleX,
   IconHelp,
+  IconLink,
   IconShieldCheck,
   IconTrash,
 } from '@tabler/icons-react'
@@ -32,11 +33,11 @@ import {
   useDeleteArch,
   useDeleteModel,
   useModels,
-  type DeleteArchPreview,
-  type FileIntegrityResult,
+  type DeleteArchPreviewDto as DeleteArchPreview,
+  type FileIntegrityResultDto as FileIntegrityResult,
   type IntegrityStatus,
   type ModelArchitecture,
-  type ModelFile,
+  type ModelFileDto as ModelFile,
   type ModelRole,
   type ModelType,
   ARCH_COLOR,
@@ -138,10 +139,29 @@ function DeleteFileButton({ model }: { model: ModelFile }) {
             </Text>
           </Text>
 
-          <Text size="xs" c="dimmed">
-            This cannot be undone. If this file is shared with another architecture,
-            that architecture will lose readiness.
-          </Text>
+          {/* Warn if deleting this shared file will break other architectures */}
+          {model.sharedWith && model.sharedWith.length > 0 && (
+            <Box
+              p="xs"
+              style={{
+                borderRadius: 6,
+                background: 'var(--mantine-color-orange-light)',
+                border: '1px solid var(--mantine-color-orange-light-hover)',
+              }}
+            >
+              <Group gap="xs" mb={4}>
+                <IconAlertTriangle size={13} color="var(--mantine-color-orange-6)" />
+                <Text size="xs" fw={600} c="orange">Shared file</Text>
+              </Group>
+              <Text size="xs" c="dimmed">
+                Also used by:{' '}
+                {(model.sharedWith as ModelArchitecture[]).map((a) => ARCH_LABEL[a] ?? a).join(', ')}.
+                Deleting it will break readiness for those architectures.
+              </Text>
+            </Box>
+          )}
+
+          <Text size="xs" c="dimmed">This cannot be undone.</Text>
 
           <Group justify="flex-end" gap="sm">
             <Button variant="default" size="xs" onClick={close}>
@@ -206,7 +226,6 @@ function ReadinessBadge({ arch }: { arch: ModelArchitecture }) {
   const { data, isLoading } = useArchReadiness(arch)
 
   if (isLoading) return <Loader size={12} />
-
   if (!data) return null
 
   if (data.ready) {
@@ -241,9 +260,7 @@ function DeleteArchButton({ arch }: { arch: ModelArchitecture }) {
   const { mutate: deleteArch, isPending } = useDeleteArch()
 
   const openWithPreview = async (e: React.MouseEvent) => {
-    // Stop accordion from toggling
     e.stopPropagation()
-
     setLoadingPreview(true)
     try {
       const p = await modelsApi.previewDeleteArch(arch)
@@ -304,9 +321,7 @@ function DeleteArchButton({ arch }: { arch: ModelArchitecture }) {
               >
                 <Group gap="xs" mb={6}>
                   <IconAlertTriangle size={14} color="var(--mantine-color-orange-6)" />
-                  <Text size="xs" fw={600} c="orange">
-                    Shared files warning
-                  </Text>
+                  <Text size="xs" fw={600} c="orange">Shared files warning</Text>
                 </Group>
                 <Text size="xs" c="dimmed" mb={6}>
                   The following files are also used by other architectures and will be deleted:
@@ -318,7 +333,7 @@ function DeleteArchButton({ arch }: { arch: ModelArchitecture }) {
                         {w.file.filename}
                       </Text>
                       <Text component="span" size="xs" c="dimmed">
-                        {' '}— also used by: {w.sharedWithArches.map((a) => ARCH_LABEL[a]).join(', ')}
+                        {' '}— also used by: {(w.sharedWithArches as unknown as ModelArchitecture[]).map((a) => ARCH_LABEL[a]).join(', ')}
                       </Text>
                     </List.Item>
                   ))}
@@ -345,9 +360,7 @@ function DeleteArchButton({ arch }: { arch: ModelArchitecture }) {
             </List>
 
             <Group justify="flex-end" gap="sm">
-              <Button variant="default" size="xs" onClick={close}>
-                Cancel
-              </Button>
+              <Button variant="default" size="xs" onClick={close}>Cancel</Button>
               <Button color="red" size="xs" loading={isPending} onClick={confirm}>
                 Delete {preview.toDelete.length} files
               </Button>
@@ -372,28 +385,31 @@ function ArchHeader({
   count: number
   totalBytes: number
 }) {
+  const isShared = arch === 'unknown'
+
   return (
     <Group gap="sm" align="center" justify="space-between" style={{ flex: 1 }}>
       <Group gap="sm" align="center">
         <Badge
           size="md"
           variant="light"
-          color={ARCH_COLOR[arch]}
+          color={isShared ? 'violet' : ARCH_COLOR[arch]}
           radius="sm"
+          leftSection={isShared ? <IconLink size={11} /> : undefined}
           style={{ minWidth: 86, textAlign: 'center' }}
         >
-          {ARCH_LABEL[arch]}
+          {isShared ? 'Shared files' : ARCH_LABEL[arch]}
         </Badge>
         <Text size="sm" c="dimmed">
-          {count} {count === 1 ? 'model' : 'models'}
+          {count} {count === 1 ? (isShared ? 'file' : 'model') : (isShared ? 'files' : 'models')}
         </Text>
         <Text size="xs" c="dimmed" style={{ fontFamily: 'var(--font-mono)' }}>
           · {formatSize(totalBytes)}
         </Text>
-        {arch !== 'unknown' && <ReadinessBadge arch={arch} />}
+        {!isShared && <ReadinessBadge arch={arch} />}
       </Group>
 
-      {arch !== 'unknown' && (
+      {!isShared && (
         <Box onClick={(e) => e.stopPropagation()}>
           <DeleteArchButton arch={arch} />
         </Box>
@@ -403,19 +419,50 @@ function ArchHeader({
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Shared-with cell — arch badges for files in shared/ directories
+// ─────────────────────────────────────────────────────────────────────────────
+
+function SharedWithCell({ sharedWith }: { sharedWith?: string[] }) {
+  if (!sharedWith || sharedWith.length === 0) {
+    return <Text size="xs" c="dimmed">—</Text>
+  }
+
+  return (
+    <Group gap={4} wrap="nowrap">
+      {(sharedWith as ModelArchitecture[]).map((a) => (
+        <Tooltip key={a} label={ARCH_LABEL[a] ?? a} withArrow>
+          <Badge
+            size="xs"
+            variant="light"
+            color={ARCH_COLOR[a] ?? 'gray'}
+            radius="sm"
+            style={{ cursor: 'default', padding: '0 6px' }}
+          >
+            {a}
+          </Badge>
+        </Tooltip>
+      ))}
+    </Group>
+  )
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Sortable inner panel
 // ─────────────────────────────────────────────────────────────────────────────
 
-function ArchPanel({ models }: { models: ModelFile[] }) {
+function ArchPanel({
+  models,
+  showSharedWith = false,
+}: {
+  models: ModelFile[]
+  showSharedWith?: boolean
+}) {
   const [sortStatus, setSortStatus] = useState<DataTableSortStatus<ModelFile>>({
     columnAccessor: 'name',
     direction: 'asc',
   })
 
-  // Map of fileId → integrity result, persists for the session
-  const [integrityResults, setIntegrityResults] = useState<
-    Record<string, FileIntegrityResult>
-  >({})
+  const [integrityResults, setIntegrityResults] = useState<Record<string, FileIntegrityResult>>({})
 
   const handleIntegrityResult = (r: FileIntegrityResult) => {
     setIntegrityResults((prev) => ({ ...prev, [r.id]: r }))
@@ -466,11 +513,25 @@ function ArchPanel({ models }: { models: ModelFile[] }) {
         </Text>
       ),
     },
+    // "Used by" column — only rendered for the shared (unknown arch) group
+    ...(showSharedWith
+      ? [
+          {
+            accessor: 'sharedWith' as keyof ModelFile,
+            title: 'Used by',
+            sortable: false,
+            width: 200,
+            render: (model: ModelFile) => (
+              <SharedWithCell sharedWith={model.sharedWith as string[] | undefined} />
+            ),
+          },
+        ]
+      : []),
     {
       accessor: 'sizeBytes',
       title: 'Size',
       sortable: true,
-      textAlign: 'right',
+      textAlign: 'right' as const,
       width: 96,
       render: ({ sizeBytes }) => (
         <Text size="xs" c="dimmed" style={{ fontFamily: 'var(--font-mono)', fontSize: '0.78rem' }}>
@@ -557,7 +618,8 @@ export default function ModelsTable({ typeFilter }: ModelsTableProps) {
   const { data, isFetching } = useModels()
 
   const groups = useMemo(() => {
-    const source = data ?? []
+    let source = data ?? []
+    if (!Array.isArray(source)) source = [source]
     const filtered = typeFilter ? source.filter((m) => m.type === typeFilter) : source
 
     const map = new Map<ModelArchitecture, ModelFile[]>()
@@ -625,7 +687,7 @@ export default function ModelsTable({ typeFilter }: ModelsTableProps) {
             <ArchHeader arch={arch} count={models.length} totalBytes={totalBytes} />
           </Accordion.Control>
           <Accordion.Panel className="px-2 py-1">
-            <ArchPanel models={models} />
+            <ArchPanel models={models} showSharedWith={arch === 'unknown'} />
           </Accordion.Panel>
         </Accordion.Item>
       ))}

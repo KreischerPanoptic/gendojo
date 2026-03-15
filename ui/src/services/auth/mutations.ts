@@ -1,8 +1,8 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from '@tanstack/react-router'
 import { authApi } from './api'
-import type { LoginRequest } from './types'
 import { useAuthStore } from '@stores/authStore'
+import type { LoginDto, MfaSetupResponseDto, MfaTokenDto } from '@api/types.gen'
 
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -11,7 +11,7 @@ export const useLogin = () => {
   const setAuth = useAuthStore((s) => s.setAuth)
 
   return useMutation({
-    mutationFn: (credentials: LoginRequest) => authApi.login(credentials),
+    mutationFn: (credentials: LoginDto) => authApi.login(credentials),
 
     onSuccess: ({ accessToken, username }) => {
       setAuth(accessToken, username)
@@ -26,26 +26,59 @@ export const useLogin = () => {
 
 // ─────────────────────────────────────────────────────────────────────────────
 
+export const useMfaSetup = () => {
+  return useMutation<MfaSetupResponseDto, Error, void>({
+    mutationFn: () => authApi.mfaSetup(),
+
+    onError: (error) => {
+      console.error('[Auth] MFA setup failed:', error)
+    },
+  })
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const useMfaEnable = () => {
+  return useMutation({
+    mutationFn: (token: MfaTokenDto) => authApi.mfaEnable(token),
+
+    onError: (error) => {
+      console.error('[Auth] MFA enable failed:', error)
+    },
+  })
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const useMfaVerify = () => {
+  return useMutation({
+    mutationFn: (token: MfaTokenDto) => authApi.mfaVerify(token),
+
+    onError: (error) => {
+      console.error('[Auth] MFA verify failed:', error)
+    },
+  })
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 export const useLogout = () => {
   const queryClient = useQueryClient()
   const navigate = useNavigate()
   const clearAuth = useAuthStore((s) => s.clearAuth)
 
   return useMutation({
-    // No logout endpoint — token is stateless JWT, just clear locally
     mutationFn: async () => {
       clearAuth()
     },
 
     onSuccess: () => {
-      // Clear all cached queries so stale data isn't shown after re-login
       queryClient.clear()
       void navigate({ to: '/login' })
     },
 
     onError: (error) => {
       console.error('[Auth] Logout error:', error)
-      // Still clear locally even on error
       clearAuth()
       queryClient.clear()
       void navigate({ to: '/login' })

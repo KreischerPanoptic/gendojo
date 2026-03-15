@@ -1,6 +1,6 @@
 import { ApiPropertyOptional } from "@nestjs/swagger";
 import { IsOptional, IsString, ValidateIf } from "class-validator";
-import type { ModelArchitecture, ModelRole } from "src/models/entities/models.types";
+import type { ModelArchitecture, ModelRole } from "src/models/types/models.types";
 
 /**
  * POST /downloader

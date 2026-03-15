@@ -1,6 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { IsEnum, IsOptional, IsString, ValidateIf } from 'class-validator';
-import type { ModelArchitecture, ModelRole } from '../../models/entities/models.types';
+import type { ModelArchitecture, ModelRole } from '../../models/types/models.types';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Domain types
