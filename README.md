@@ -1,9 +1,24 @@
 # GenDojo
-
 > A self-hosted training workbench for diffusion model fine-tuning.  
 > Built on [kohya-ss/sd-scripts](https://github.com/kohya-ss/sd-scripts). Runs on RunPod via Docker — no Gradio, no web terminal wrestling.
 
 The goal is a single tool you never have to leave — from raw images to trained LoRA.
+
+---
+
+## Deploy on RunPod
+
+The fastest way to get started — one click, no setup:
+
+| GPU | Template |
+|---|---|
+| RTX 5090 | [![Deploy on RunPod](https://img.shields.io/badge/RunPod-RTX%205090-orange?logo=data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI+PHBhdGggZmlsbD0id2hpdGUiIGQ9Ik0xMiAyQzYuNDggMiAyIDYuNDggMiAxMnM0LjQ4IDEwIDEwIDEwIDEwLTQuNDggMTAtMTBTMTcuNTIgMiAxMiAyem0tMiAxNWwtNS01IDEuNDEtMS40MUwxMCAxNC4xN2w3LjU5LTcuNTlMMTkgOGwtOSA5eiIvPjwvc3ZnPg==)](https://console.runpod.io/deploy?template=d2hidy772v&ref=6jmhmt1l) |
+| RTX 4090 | [![Deploy on RunPod](https://img.shields.io/badge/RunPod-RTX%204090-orange?logo=data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI+PHBhdGggZmlsbD0id2hpdGUiIGQ9Ik0xMiAyQzYuNDggMiAyIDYuNDggMiAxMnM0LjQ4IDEwIDEwIDEwIDEwLTQuNDggMTAtMTBTMTcuNTIgMiAxMiAyem0tMiAxNWwtNS01IDEuNDEtMS40MUwxMCAxNC4xN2w3LjU5LTcuNTlMMTkgOGwtOSA5eiIvPjwvc3ZnPg==)](https://console.runpod.io/deploy?template=682kavt6sq&ref=6jmhmt1l) |
+
+After the pod starts, set port `3000` as HTTP in your pod template if not already configured.  
+UI available at `https://[pod-id]-3000.proxy.runpod.net`.
+
+**Default credentials:** `admin` / `gendojo`
 
 ---
 
@@ -31,13 +46,13 @@ The goal is a single tool you never have to leave — from raw images to trained
 | Routing | TanStack Router |
 | Server state | TanStack Query |
 | Real-time | Socket.IO |
-| Package manager | pnpm |
+| Package manager | bun |
 | Training engine | kohya-ss/sd-scripts (git submodule) |
 | Deploy | Docker → RunPod (CUDA 12.x) |
 
 ---
 
-## Quick start
+## Quick start (self-hosted)
 
 ```bash
 git clone --recurse-submodules https://github.com/KreischerPanoptic/gendojo.git
@@ -49,8 +64,7 @@ docker run --gpus all -p 3000:3000 \
   gendojo
 ```
 
-On RunPod — set port `3000` as HTTP in your pod template.  
-UI available at `https://[pod-id]-3000.proxy.runpod.net`.
+UI available at `http://localhost:3000`.
 
 **Default credentials:** `admin` / `gendojo`
 
