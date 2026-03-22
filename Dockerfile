@@ -14,7 +14,7 @@
 FROM oven/bun:1.3-slim AS ui-builder
 WORKDIR /build
 
-COPY ui/package.json ui/bun.lock ./
+COPY ui/package.json ui/bun.lock ./ 
 RUN bun install --frozen-lockfile
 
 COPY ui/ ./
