@@ -15,8 +15,8 @@ import {
   ThemeIcon,
   Title,
   Tooltip,
-} from '@mantine/core'
-import { useDisclosure } from '@mantine/hooks'
+} from "@mantine/core";
+import { useDisclosure } from "@mantine/hooks";
 import {
   IconAlertTriangle,
   IconArrowDown,
@@ -33,36 +33,36 @@ import {
   IconWifi,
   IconWifiOff,
   IconX,
-} from '@tabler/icons-react'
-import { useCallback, useEffect, useRef, useState, useMemo } from 'react'
-import { useNavigate, useParams } from '@tanstack/react-router'
+} from "@tabler/icons-react";
+import { useCallback, useEffect, useRef, useState, useMemo } from "react";
+import { useNavigate, useParams } from "@tanstack/react-router";
 
-import type { JobStatus, LogLine } from '@services/jobs'
-import { useJob, useKillJob, useJobSocket } from '@services/jobs'
-import { useJobOutputs } from '@services/jobs/outputs'
+import type { JobStatus, LogLine } from "@services/jobs";
+import { useJob, useKillJob, useJobSocket } from "@services/jobs";
+import { useJobOutputs } from "@services/jobs/outputs";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Status helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
 const STATUS_COLOR: Record<JobStatus, string> = {
-  pending: 'yellow',
-  running: 'blue',
-  done:    'green',
-  failed:  'red',
-  killed:  'gray',
-}
+  pending: "yellow",
+  running: "blue",
+  done: "green",
+  failed: "red",
+  killed: "gray",
+};
 
 const STATUS_LABEL: Record<JobStatus, string> = {
-  pending: 'Pending',
-  running: 'Running',
-  done:    'Done',
-  failed:  'Failed',
-  killed:  'Killed',
-}
+  pending: "Pending",
+  running: "Running",
+  done: "Done",
+  failed: "Failed",
+  killed: "Killed",
+};
 
 function StatusBadge({ status }: { status: JobStatus }) {
-  const isRunning = status === 'running'
+  const isRunning = status === "running";
   return (
     <Indicator
       processing={isRunning}
@@ -75,7 +75,7 @@ function StatusBadge({ status }: { status: JobStatus }) {
         {STATUS_LABEL[status]}
       </Badge>
     </Indicator>
-  )
+  );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -83,21 +83,24 @@ function StatusBadge({ status }: { status: JobStatus }) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 function formatDuration(startedAt?: string, finishedAt?: string): string {
-  if (!startedAt) return '—'
-  const start = new Date(startedAt).getTime()
-  const end   = finishedAt ? new Date(finishedAt).getTime() : Date.now()
-  const s     = Math.floor((end - start) / 1000)
-  if (s < 60)   return `${s}s`
-  if (s < 3600) return `${Math.floor(s / 60)}m ${s % 60}s`
-  return `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m`
+  if (!startedAt) return "—";
+  const start = new Date(startedAt).getTime();
+  const end = finishedAt ? new Date(finishedAt).getTime() : Date.now();
+  const s = Math.floor((end - start) / 1000);
+  if (s < 60) return `${s}s`;
+  if (s < 3600) return `${Math.floor(s / 60)}m ${s % 60}s`;
+  return `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m`;
 }
 
 function formatTs(iso?: string) {
-  if (!iso) return '—'
+  if (!iso) return "—";
   return new Date(iso).toLocaleString(undefined, {
-    month: 'short', day: 'numeric',
-    hour: '2-digit', minute: '2-digit', second: '2-digit',
-  })
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -105,9 +108,9 @@ function formatTs(iso?: string) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 function LogLineItem({ line }: { line: LogLine }) {
-  const isErr = line.stream === 'stderr'
+  const isErr = line.stream === "stderr";
   // tqdm lines end with \r and contain %, mark them as progress
-  const isProgress = line.text.includes('%|') || line.text.endsWith('\r')
+  const isProgress = line.text.includes("%|") || line.text.endsWith("\r");
   return (
     <Text
       component="div"
@@ -115,19 +118,19 @@ function LogLineItem({ line }: { line: LogLine }) {
       ff="monospace"
       style={{
         lineHeight: 1.6,
-        whiteSpace: 'pre-wrap',
-        wordBreak: 'break-all',
+        whiteSpace: "pre-wrap",
+        wordBreak: "break-all",
         color: isErr
           ? isProgress
-            ? 'var(--mantine-color-blue-4)'   // tqdm progress → blue
-            : 'var(--mantine-color-red-4)'     // real stderr → red
-          : 'var(--mantine-color-text)',
+            ? "var(--mantine-color-blue-4)" // tqdm progress → blue
+            : "var(--mantine-color-red-4)" // real stderr → red
+          : "var(--mantine-color-text)",
         opacity: isProgress ? 0.85 : 1,
       }}
     >
       {line.text}
     </Text>
-  )
+  );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -141,11 +144,11 @@ function KillModal({
   isPending,
   jobName,
 }: {
-  opened: boolean
-  onClose: () => void
-  onConfirm: () => void
-  isPending: boolean
-  jobName: string
+  opened: boolean;
+  onClose: () => void;
+  onConfirm: () => void;
+  isPending: boolean;
+  jobName: string;
 }) {
   return (
     <Modal
@@ -156,7 +159,9 @@ function KillModal({
           <ThemeIcon color="red" variant="light" size="sm">
             <IconAlertTriangle size={14} />
           </ThemeIcon>
-          <Text fw={600} size="sm">Kill training job?</Text>
+          <Text fw={600} size="sm">
+            Kill training job?
+          </Text>
         </Group>
       }
       size="sm"
@@ -164,62 +169,89 @@ function KillModal({
     >
       <Stack gap="md">
         <Text size="sm" c="dimmed">
-          This will send SIGTERM to the training process for{' '}
+          This will send SIGTERM to the training process for{" "}
           <Text component="span" fw={500} c="var(--mantine-color-text)">
             {jobName}
           </Text>
           . Any unsaved checkpoint progress will be lost.
         </Text>
         <Group justify="flex-end" gap="xs">
-          <Button variant="subtle" color="gray" size="sm" onClick={onClose} disabled={isPending}>
+          <Button
+            variant="subtle"
+            color="gray"
+            size="sm"
+            onClick={onClose}
+            disabled={isPending}
+          >
             Cancel
           </Button>
-          <Button color="red" size="sm" loading={isPending} onClick={onConfirm}
-            leftSection={<IconPlayerStop size={14} />}>
+          <Button
+            color="red"
+            size="sm"
+            loading={isPending}
+            onClick={onConfirm}
+            leftSection={<IconPlayerStop size={14} />}
+          >
             Kill job
           </Button>
         </Group>
       </Stack>
     </Modal>
-  )
+  );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Meta row helper
 // ─────────────────────────────────────────────────────────────────────────────
 
-function MetaRow({ label, value, mono }: { label: string; value: React.ReactNode; mono?: boolean }) {
+function MetaRow({
+  label,
+  value,
+  mono,
+}: {
+  label: string;
+  value: React.ReactNode;
+  mono?: boolean;
+}) {
   return (
     <Group gap="xs" align="flex-start" wrap="nowrap">
-      <Text size="xs" c="dimmed" style={{ minWidth: 110, flexShrink: 0 }}>{label}</Text>
+      <Text size="xs" c="dimmed" style={{ minWidth: 110, flexShrink: 0 }}>
+        {label}
+      </Text>
       {mono ? (
-        <Text size="xs" ff="monospace" style={{ wordBreak: 'break-all' }}>{value}</Text>
+        <Text size="xs" ff="monospace" style={{ wordBreak: "break-all" }}>
+          {value}
+        </Text>
       ) : (
         <Text size="xs">{value}</Text>
       )}
     </Group>
-  )
+  );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Live duration ticker — updates every second while job is running
 // ─────────────────────────────────────────────────────────────────────────────
 
-function LiveDuration({ startedAt, finishedAt, status }: {
-  startedAt?: string
-  finishedAt?: string
-  status: JobStatus
+function LiveDuration({
+  startedAt,
+  finishedAt,
+  status,
+}: {
+  startedAt?: string;
+  finishedAt?: string;
+  status: JobStatus;
 }) {
-  const [, setTick] = useState(0)
-  const isLive = status === 'running' || status === 'pending'
+  const [, setTick] = useState(0);
+  const isLive = status === "running" || status === "pending";
 
   useEffect(() => {
-    if (!isLive) return
-    const t = setInterval(() => setTick(n => n + 1), 1000)
-    return () => clearInterval(t)
-  }, [isLive])
+    if (!isLive) return;
+    const t = setInterval(() => setTick((n) => n + 1), 1000);
+    return () => clearInterval(t);
+  }, [isLive]);
 
-  return <>{formatDuration(startedAt, finishedAt)}</>
+  return <>{formatDuration(startedAt, finishedAt)}</>;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -227,28 +259,30 @@ function LiveDuration({ startedAt, finishedAt, status }: {
 // ─────────────────────────────────────────────────────────────────────────────
 
 export default function JobDetailPage() {
-  const { id } = useParams({ from: '/_authenticated/jobs/$id/' })
-  const navigate = useNavigate()
+  const { id } = useParams({ from: "/_authenticated/jobs/$id/" });
+  const navigate = useNavigate();
 
-  const { data: job, isLoading } = useJob(id)
-  const { mutate: killJob, isPending: isKilling } = useKillJob()
-  const [killModalOpen, { open: openKill, close: closeKill }] = useDisclosure(false)
+  const { data: job, isLoading } = useJob({ id });
+  const { mutate: killJob, isPending: isKilling } = useKillJob();
+  const [killModalOpen, { open: openKill, close: closeKill }] =
+    useDisclosure(false);
 
-  const isTerminal = job?.status === 'done' || job?.status === 'failed' || job?.status === 'killed'
+  const isTerminal =
+    job?.status === "done" ||
+    job?.status === "failed" ||
+    job?.status === "killed";
 
   // Poll outputs only when terminal (no need to hammer during training)
-  const { data: outputs } = useJobOutputs(id, isTerminal, 30_000)
+  const { data: outputs } = useJobOutputs({ id }, isTerminal, 30_000);
 
   // ── Socket live logs ────────────────────────────────────────────────────────
   const { logs: socketLogs, isConnected } = useJobSocket({
     jobId: id,
     enabled: !isTerminal,
-  })
+  });
 
   // Use socket logs while running; fall back to buffer from REST after terminal
-  const logs: LogLine[] = isTerminal
-    ? (job?.logBuffer ?? [])
-    : socketLogs
+  const logs: LogLine[] = isTerminal ? (job?.logBuffer ?? []) : socketLogs;
 
   // ── Auto-scroll ─────────────────────────────────────────────────────────────
   //
@@ -259,48 +293,50 @@ export default function JobDetailPage() {
   // pinned=true  → auto-jump to bottom on every new line (instant, no smooth jitter)
   // pinned=false → user scrolled up; show "Jump to bottom" button
   //
-  const scrollRef     = useRef<HTMLDivElement>(null)
-  const prevLenRef    = useRef(0)
-  const [pinned, setPinned] = useState(true)
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const prevLenRef = useRef(0);
+  const [pinned, setPinned] = useState(true);
 
   useEffect(() => {
-    if (!pinned) return
-    const el = scrollRef.current
-    if (!el || logs.length === prevLenRef.current) return
-    prevLenRef.current = logs.length
-    el.scrollTop = el.scrollHeight          // instant — smooth causes lag on live tailing
-  }, [logs.length, pinned])
+    if (!pinned) return;
+    const el = scrollRef.current;
+    if (!el || logs.length === prevLenRef.current) return;
+    prevLenRef.current = logs.length;
+    el.scrollTop = el.scrollHeight; // instant — smooth causes lag on live tailing
+  }, [logs.length, pinned]);
 
   // Detect manual scroll — unpin when user scrolls away from bottom
   const handleScroll = useCallback(() => {
-    const el = scrollRef.current
-    if (!el) return
-    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 40
-    setPinned(atBottom)
-  }, [])
+    const el = scrollRef.current;
+    if (!el) return;
+    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+    setPinned(atBottom);
+  }, []);
 
   const scrollToBottom = useCallback(() => {
-    const el = scrollRef.current
-    if (!el) return
-    el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' })
-    setPinned(true)
-  }, [])
+    const el = scrollRef.current;
+    if (!el) return;
+    el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+    setPinned(true);
+  }, []);
 
   // ── Log text for copy ────────────────────────────────────────────────────────
-  const logText = useMemo(() => logs.map(l => l.text).join('\n'), [logs])
+  const logText = useMemo(() => logs.map((l) => l.text).join("\n"), [logs]);
 
   // ── Kill handler ─────────────────────────────────────────────────────────────
   const handleKillConfirm = () => {
-    killJob(id, { onSuccess: closeKill })
-  }
+    killJob({ id }, { onSuccess: closeKill });
+  };
 
   // ── Loading state ────────────────────────────────────────────────────────────
   if (isLoading || !job) {
     return (
       <Stack align="center" justify="center" h="100%" gap="xs">
-        <Text c="dimmed" size="sm">Loading job…</Text>
+        <Text c="dimmed" size="sm">
+          Loading job…
+        </Text>
       </Stack>
-    )
+    );
   }
 
   // ── Render ───────────────────────────────────────────────────────────────────
@@ -315,23 +351,35 @@ export default function JobDetailPage() {
         jobName={job.name}
       />
 
-      <Stack gap={0} h="100%" style={{ overflow: 'hidden' }}>
-
+      <Stack gap={0} h="100%" style={{ overflow: "hidden" }}>
         {/* ── Header ────────────────────────────────────────────────────────── */}
         <Box
-          p="lg" pb="md"
-          style={{ borderBottom: '1px solid var(--mantine-color-default-border)', flexShrink: 0 }}
+          p="lg"
+          pb="md"
+          style={{
+            borderBottom: "1px solid var(--mantine-color-default-border)",
+            flexShrink: 0,
+          }}
         >
           <Group justify="space-between" align="center">
             <Group gap="md" align="center">
-              <ActionIcon variant="subtle" size="sm"
-                onClick={() => void navigate({ to: '/jobs' })}>
+              <ActionIcon
+                variant="subtle"
+                size="sm"
+                onClick={() => void navigate({ to: "/jobs" })}
+              >
                 <IconArrowLeft size={15} />
               </ActionIcon>
 
               <Stack gap={2}>
                 <Group gap="xs" align="center">
-                  <Title order={3} style={{ fontFamily: 'var(--font-mono)', fontSize: '1.1rem' }}>
+                  <Title
+                    order={3}
+                    style={{
+                      fontFamily: "var(--font-mono)",
+                      fontSize: "1.1rem",
+                    }}
+                  >
                     {job.name}
                   </Title>
                   <StatusBadge status={job.status} />
@@ -341,26 +389,28 @@ export default function JobDetailPage() {
                   <Badge variant="dot" color="blue" size="xs">
                     {job.script}
                   </Badge>
-                  {job.archived && (
+                  {/*{job.archived && (
                     <Badge variant="outline" color="gray" size="xs">
                       Archived
                     </Badge>
-                  )}
+                  )}*/}
                 </Group>
                 <Group gap="xs">
                   <Text size="xs" c="dimmed">
-                    <IconClock size={11} style={{ verticalAlign: -1 }} />{' '}
+                    <IconClock size={11} style={{ verticalAlign: -1 }} />{" "}
                     <LiveDuration
                       startedAt={job.startedAt}
                       finishedAt={job.finishedAt}
                       status={job.status}
                     />
                   </Text>
-                  {job.pid && job.status === 'running' && (
-                    <Text size="xs" c="dimmed">· PID {job.pid}</Text>
-                  )}
+                  {/*{job.pid && job.status === "running" && (
+                    <Text size="xs" c="dimmed">
+                      · PID {job.pid}
+                    </Text>
+                  )}*/}
                   {job.exitCode !== undefined && (
-                    <Text size="xs" c={job.exitCode === 0 ? 'green' : 'red'}>
+                    <Text size="xs" c={job.exitCode === 0 ? "green" : "red"}>
                       · exit {job.exitCode}
                     </Text>
                   )}
@@ -371,13 +421,21 @@ export default function JobDetailPage() {
             <Group gap="xs">
               {/* WS indicator */}
               {!isTerminal && (
-                <Tooltip label={isConnected ? 'Live — WebSocket connected' : 'Reconnecting…'}>
+                <Tooltip
+                  label={
+                    isConnected ? "Live — WebSocket connected" : "Reconnecting…"
+                  }
+                >
                   <ActionIcon
                     variant="subtle"
-                    color={isConnected ? 'green' : 'yellow'}
+                    color={isConnected ? "green" : "yellow"}
                     size="sm"
                   >
-                    {isConnected ? <IconWifi size={14} /> : <IconWifiOff size={14} />}
+                    {isConnected ? (
+                      <IconWifi size={14} />
+                    ) : (
+                      <IconWifiOff size={14} />
+                    )}
                   </ActionIcon>
                 </Tooltip>
               )}
@@ -389,7 +447,9 @@ export default function JobDetailPage() {
                   color="blue"
                   size="sm"
                   leftSection={<IconLayersSubtract size={14} />}
-                  onClick={() => void navigate({ to: '/jobs/$id/outputs', params: { id } })}
+                  onClick={() =>
+                    void navigate({ to: "/jobs/$id/outputs", params: { id } })
+                  }
                   rightSection={
                     outputs && outputs.checkpoints.length > 0 ? (
                       <Badge size="xs" variant="filled" color="blue" circle>
@@ -405,7 +465,9 @@ export default function JobDetailPage() {
               {/* Kill button — only for running/pending */}
               {!isTerminal && (
                 <Button
-                  color="red" variant="light" size="sm"
+                  color="red"
+                  variant="light"
+                  size="sm"
                   leftSection={<IconPlayerStop size={14} />}
                   loading={isKilling}
                   onClick={openKill}
@@ -415,12 +477,12 @@ export default function JobDetailPage() {
               )}
 
               {/* Done icon */}
-              {job.status === 'done' && (
+              {job.status === "done" && (
                 <ThemeIcon color="green" variant="light" size="sm" radius="xl">
                   <IconCircleCheck size={14} />
                 </ThemeIcon>
               )}
-              {job.status === 'failed' && (
+              {job.status === "failed" && (
                 <ThemeIcon color="red" variant="light" size="sm" radius="xl">
                   <IconX size={14} />
                 </ThemeIcon>
@@ -431,34 +493,37 @@ export default function JobDetailPage() {
 
         {/* ── Body ──────────────────────────────────────────────────────────── */}
         <Group
-          gap="lg" p="lg"
+          gap="lg"
+          p="lg"
           style={{
             flex: 1,
-            minHeight: 0,          // flex-потомок Stack — без этого не сжимается
-            overflow: 'hidden',
-            flexWrap: 'nowrap',
-            alignItems: 'stretch', // дети растягиваются на всю высоту Group
+            minHeight: 0, // flex-потомок Stack — без этого не сжимается
+            overflow: "hidden",
+            flexWrap: "nowrap",
+            alignItems: "stretch", // дети растягиваются на всю высоту Group
           }}
         >
-
           {/* ── Log terminal (left, grows) ──────────────────────────────────── */}
           <Paper
-            withBorder radius="md"
+            withBorder
+            radius="md"
             style={{
-              flex: '1 1 0',
+              flex: "1 1 0",
               minWidth: 0,
-              minHeight: 0,          // без этого Paper растёт до размера контента
-              display: 'flex',
-              flexDirection: 'column',
-              overflow: 'hidden',
-              background: 'var(--mantine-color-dark-8, #1a1b1e)',
+              minHeight: 0, // без этого Paper растёт до размера контента
+              display: "flex",
+              flexDirection: "column",
+              overflow: "hidden",
+              background: "var(--mantine-color-dark-8, #1a1b1e)",
             }}
           >
             {/* Terminal toolbar */}
             <Group
-              px="sm" py={6} gap="xs"
+              px="sm"
+              py={6}
+              gap="xs"
               style={{
-                borderBottom: '1px solid var(--mantine-color-default-border)',
+                borderBottom: "1px solid var(--mantine-color-default-border)",
                 flexShrink: 0,
               }}
             >
@@ -474,9 +539,18 @@ export default function JobDetailPage() {
               {/* Copy logs */}
               <CopyButton value={logText} timeout={1500}>
                 {({ copied, copy }) => (
-                  <Tooltip label={copied ? 'Copied!' : 'Copy logs'}>
-                    <ActionIcon size="xs" variant="subtle" color={copied ? 'green' : 'gray'} onClick={copy}>
-                      {copied ? <IconCheck size={11} /> : <IconCopy size={11} />}
+                  <Tooltip label={copied ? "Copied!" : "Copy logs"}>
+                    <ActionIcon
+                      size="xs"
+                      variant="subtle"
+                      color={copied ? "green" : "gray"}
+                      onClick={copy}
+                    >
+                      {copied ? (
+                        <IconCheck size={11} />
+                      ) : (
+                        <IconCopy size={11} />
+                      )}
                     </ActionIcon>
                   </Tooltip>
                 )}
@@ -488,24 +562,24 @@ export default function JobDetailPage() {
                 которому нужно заполнить оставшееся место и уметь скроллиться.
                 styles.viewport пробрасывает height:'100%' внутрь Mantine ScrollArea
                 (внешний wrapper ≠ внутренний viewport). */}
-            <Box style={{ flex: '1 1 0', minHeight: 0, position: 'relative' }}>
+            <Box style={{ flex: "1 1 0", minHeight: 0, position: "relative" }}>
               <ScrollArea
                 viewportRef={scrollRef}
                 onScrollCapture={handleScroll}
                 h="100%"
                 scrollbarSize={6}
-                styles={{ viewport: { height: '100%' } }}
+                styles={{ viewport: { height: "100%" } }}
               >
                 {logs.length === 0 ? (
                   <Text size="xs" c="dimmed" p="sm">
-                    {job.status === 'pending'
-                      ? 'Waiting for process to start…'
-                      : 'No output yet.'}
+                    {job.status === "pending"
+                      ? "Waiting for process to start…"
+                      : "No output yet."}
                   </Text>
                 ) : (
                   <Box component="div" pb={4}>
-                    {logs.map((line, i) => (
-                      <LogLineItem key={i} line={line} />
+                    {logs.map((line) => (
+                      <LogLineItem key={line.text} line={line} />
                     ))}
                   </Box>
                 )}
@@ -515,7 +589,7 @@ export default function JobDetailPage() {
               {!pinned && (
                 <Box
                   style={{
-                    position: 'absolute',
+                    position: "absolute",
                     bottom: 12,
                     right: 20,
                     zIndex: 10,
@@ -529,7 +603,7 @@ export default function JobDetailPage() {
                     onClick={scrollToBottom}
                     style={{
                       opacity: 0.92,
-                      boxShadow: '0 2px 8px rgba(0,0,0,0.4)',
+                      boxShadow: "0 2px 8px rgba(0,0,0,0.4)",
                     }}
                   >
                     Jump to bottom
@@ -543,20 +617,25 @@ export default function JobDetailPage() {
           <Stack
             gap="sm"
             style={{
-              flex: '0 0 320px',
-              overflowY: 'auto',   // скролл если метаданных много
+              flex: "0 0 320px",
+              overflowY: "auto", // скролл если метаданных много
             }}
           >
-
             {/* Timing */}
             <Paper withBorder p="sm" radius="md">
               <Stack gap={6}>
-                <Text fw={600} size="xs" c="dimmed" tt="uppercase" style={{ letterSpacing: '0.06em' }}>
+                <Text
+                  fw={600}
+                  size="xs"
+                  c="dimmed"
+                  tt="uppercase"
+                  style={{ letterSpacing: "0.06em" }}
+                >
                   Timing
                 </Text>
-                <MetaRow label="Created"    value={formatTs(job.createdAt)} />
-                <MetaRow label="Started"    value={formatTs(job.startedAt)} />
-                <MetaRow label="Finished"   value={formatTs(job.finishedAt)} />
+                <MetaRow label="Created" value={formatTs(job.createdAt)} />
+                <MetaRow label="Started" value={formatTs(job.startedAt)} />
+                <MetaRow label="Finished" value={formatTs(job.finishedAt)} />
                 <MetaRow
                   label="Duration"
                   value={
@@ -575,12 +654,23 @@ export default function JobDetailPage() {
               <Paper withBorder p="sm" radius="md">
                 <Stack gap={6}>
                   <Group gap={6}>
-                    <IconDatabase size={12} color="var(--mantine-color-dimmed)" />
-                    <Text fw={600} size="xs" c="dimmed" tt="uppercase" style={{ letterSpacing: '0.06em' }}>
+                    <IconDatabase
+                      size={12}
+                      color="var(--mantine-color-dimmed)"
+                    />
+                    <Text
+                      fw={600}
+                      size="xs"
+                      c="dimmed"
+                      tt="uppercase"
+                      style={{ letterSpacing: "0.06em" }}
+                    >
                       Dataset
                     </Text>
                   </Group>
-                  <Text size="xs" ff="monospace">{job.datasetName}</Text>
+                  <Text size="xs" ff="monospace">
+                    {job.datasetName}
+                  </Text>
                 </Stack>
               </Paper>
             )}
@@ -590,14 +680,24 @@ export default function JobDetailPage() {
               <Stack gap={6}>
                 <Group gap={6}>
                   <IconFileText size={12} color="var(--mantine-color-dimmed)" />
-                  <Text fw={600} size="xs" c="dimmed" tt="uppercase" style={{ letterSpacing: '0.06em' }}>
+                  <Text
+                    fw={600}
+                    size="xs"
+                    c="dimmed"
+                    tt="uppercase"
+                    style={{ letterSpacing: "0.06em" }}
+                  >
                     Paths
                   </Text>
                 </Group>
-                <MetaRow label="Job dir"       value={job.jobDir}            mono />
-                <MetaRow label="Train TOML"    value={job.trainTomlPath}     mono />
-                <MetaRow label="Dataset TOML"  value={job.datasetTomlPath}   mono />
-                <MetaRow label="Log file"      value={job.logFilePath}       mono />
+                <MetaRow label="Job dir" value={job.jobDir} mono />
+                <MetaRow label="Train TOML" value={job.trainTomlPath} mono />
+                <MetaRow
+                  label="Dataset TOML"
+                  value={job.datasetTomlPath}
+                  mono
+                />
+                <MetaRow label="Log file" value={job.logFilePath} mono />
               </Stack>
             </Paper>
 
@@ -605,15 +705,34 @@ export default function JobDetailPage() {
             <Paper withBorder p="sm" radius="md">
               <Stack gap={6}>
                 <Group gap="xs" align="center">
-                  <IconTerminal2 size={12} color="var(--mantine-color-dimmed)" />
-                  <Text fw={600} size="xs" c="dimmed" tt="uppercase" style={{ letterSpacing: '0.06em' }}>
+                  <IconTerminal2
+                    size={12}
+                    color="var(--mantine-color-dimmed)"
+                  />
+                  <Text
+                    fw={600}
+                    size="xs"
+                    c="dimmed"
+                    tt="uppercase"
+                    style={{ letterSpacing: "0.06em" }}
+                  >
                     Command
                   </Text>
                   <CopyButton value={job.command} timeout={1500}>
                     {({ copied, copy }) => (
-                      <Tooltip label={copied ? 'Copied!' : 'Copy'}>
-                        <ActionIcon size="xs" variant="subtle" color={copied ? 'green' : 'gray'} onClick={copy} ml="auto">
-                          {copied ? <IconCheck size={10} /> : <IconCopy size={10} />}
+                      <Tooltip label={copied ? "Copied!" : "Copy"}>
+                        <ActionIcon
+                          size="xs"
+                          variant="subtle"
+                          color={copied ? "green" : "gray"}
+                          onClick={copy}
+                          ml="auto"
+                        >
+                          {copied ? (
+                            <IconCheck size={10} />
+                          ) : (
+                            <IconCopy size={10} />
+                          )}
                         </ActionIcon>
                       </Tooltip>
                     )}
@@ -622,20 +741,20 @@ export default function JobDetailPage() {
                 <Code
                   block
                   style={{
-                    fontSize: 10, lineHeight: 1.6,
-                    background: 'transparent',
-                    whiteSpace: 'pre-wrap',
-                    wordBreak: 'break-all',
+                    fontSize: 10,
+                    lineHeight: 1.6,
+                    background: "transparent",
+                    whiteSpace: "pre-wrap",
+                    wordBreak: "break-all",
                   }}
                 >
                   {job.command}
                 </Code>
               </Stack>
             </Paper>
-
           </Stack>
         </Group>
       </Stack>
     </>
-  )
+  );
 }

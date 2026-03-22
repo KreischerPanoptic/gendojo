@@ -66,4 +66,4 @@ echo "[api] Starting NestJS on port 3000..."
 echo ""
 
 cd /app/api
-exec node dist/main.js
+exec bun run dist/main.js

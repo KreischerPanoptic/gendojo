@@ -18,8 +18,8 @@ import {
   ThemeIcon,
   Title,
   Tooltip,
-} from '@mantine/core'
-import { notifications } from '@mantine/notifications'
+} from "@mantine/core";
+import { notifications } from "@mantine/notifications";
 import {
   IconAlertCircle,
   IconAlertTriangle,
@@ -30,7 +30,7 @@ import {
   IconPhoto,
   IconScan,
   IconTag,
-} from '@tabler/icons-react'
+} from "@tabler/icons-react";
 import {
   datasetsApi,
   useDataset,
@@ -39,73 +39,75 @@ import {
   type CaptionType,
   type DatasetMeta,
   type UpdateMeta,
-} from '@services/datasets'
-import { useNavigate, useParams } from '@tanstack/react-router'
-import { useCallback, useEffect, useMemo, useState } from 'react'
-import { LightboxModal } from '@ui/LightboxModal'
-import { makeDatasetSidePanel } from '@blocks/SidePanels/DatasetSidePanel'
-import { DatasetImageGrid } from '@layouts/DatasetImageGrid'
+} from "@services/datasets";
+import { useNavigate, useParams } from "@tanstack/react-router";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { LightboxModal } from "@ui/LightboxModal";
+import { makeDatasetSidePanel } from "@blocks/SidePanels/DatasetSidePanel";
+import { DatasetImageGrid } from "@layouts/DatasetImageGrid";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // MetaCard — inline-editable dataset metadata
 // ─────────────────────────────────────────────────────────────────────────────
 
 const CAPTION_TYPE_OPTIONS: { value: CaptionType; label: string }[] = [
-  { value: 'tag_list',         label: 'Tag list' },
-  { value: 'natural_language', label: 'Natural language' },
-  { value: 'mixed',            label: 'Mixed' },
-  { value: 'unknown',          label: 'Unknown' },
-]
+  { value: "tag_list", label: "Tag list" },
+  { value: "natural_language", label: "Natural language" },
+  { value: "mixed", label: "Mixed" },
+  { value: "unknown", label: "Unknown" },
+];
 
 interface MetaCardProps {
-  datasetName: string
-  meta: DatasetMeta | null
+  datasetName: string;
+  meta: DatasetMeta | null;
 }
 
 function MetaCard({ datasetName, meta }: MetaCardProps) {
-  const updateMeta     = useUpdateMeta(datasetName)
-  const detectType     = useDetectCaptionType(datasetName)
+  const updateMeta = useUpdateMeta(datasetName);
+  const detectType = useDetectCaptionType(datasetName);
 
   // Local state for inline edits — flush on blur
-  const [token, setToken]   = useState(meta?.activationToken ?? '')
-  const [notes, setNotes]   = useState(meta?.notes ?? '')
+  const [token, setToken] = useState(meta?.activationToken ?? "");
+  const [notes, setNotes] = useState(meta?.notes ?? "");
 
   // Keep local state in sync when meta changes (e.g. after detect)
-  const [prevMeta, setPrevMeta] = useState(meta)
+  const [prevMeta, setPrevMeta] = useState(meta);
   if (prevMeta !== meta) {
-    setPrevMeta(meta)
-    setToken(meta?.activationToken ?? '')
-    setNotes(meta?.notes ?? '')
+    setPrevMeta(meta);
+    setToken(meta?.activationToken ?? "");
+    setNotes(meta?.notes ?? "");
   }
 
   const saveField = (field: UpdateMeta) =>
     updateMeta.mutate(field, {
       onSuccess: () =>
         notifications.show({
-          message: 'Metadata saved',
-          color: 'teal',
+          message: "Metadata saved",
+          color: "teal",
           icon: <IconCheck size={14} />,
           autoClose: 1500,
         }),
-    })
+    });
 
   const handleDetect = () =>
     detectType.mutate(undefined, {
       onSuccess: (result) =>
         notifications.show({
-          title: 'Caption type detected',
+          title: "Caption type detected",
           message: `${result.captionType} (${result.sampleSize} sampled, ${Math.round(result.tagListRatio * 100)}% tag-like)`,
-          color: 'teal',
+          color: "teal",
           autoClose: 4000,
         }),
-    })
+    });
 
   return (
     <Card withBorder radius="md" p="md">
       <Group justify="space-between" mb="sm">
         <Group gap="xs">
-          <IconTag size={14} style={{ color: 'var(--mantine-color-dimmed)' }} />
-          <Text size="sm" fw={600}>Dataset metadata</Text>
+          <IconTag size={14} style={{ color: "var(--mantine-color-dimmed)" }} />
+          <Text size="sm" fw={600}>
+            Dataset metadata
+          </Text>
         </Group>
         <Tooltip label="Auto-detect caption type from file contents" withArrow>
           <Button
@@ -129,7 +131,9 @@ function MetaCard({ datasetName, meta }: MetaCardProps) {
           value={token}
           onChange={(e) => setToken(e.currentTarget.value)}
           onBlur={() => saveField({ activationToken: token.trim() || null })}
-          styles={{ input: { fontFamily: 'var(--mantine-font-family-monospace)' } }}
+          styles={{
+            input: { fontFamily: "var(--mantine-font-family-monospace)" },
+          }}
         />
 
         {/* Caption type */}
@@ -137,8 +141,10 @@ function MetaCard({ datasetName, meta }: MetaCardProps) {
           label="Caption type"
           size="xs"
           data={CAPTION_TYPE_OPTIONS}
-          value={meta?.captionType ?? 'unknown'}
-          onChange={(val) => val && saveField({ captionType: val as CaptionType })}
+          value={meta?.captionType ?? "unknown"}
+          onChange={(val) =>
+            val && saveField({ captionType: val as CaptionType })
+          }
         />
 
         {/* Notes */}
@@ -155,7 +161,7 @@ function MetaCard({ datasetName, meta }: MetaCardProps) {
         />
       </SimpleGrid>
     </Card>
-  )
+  );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -163,25 +169,25 @@ function MetaCard({ datasetName, meta }: MetaCardProps) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 export default function ViewDatasetPage() {
-  const navigate = useNavigate()
+  const navigate = useNavigate();
   const { datasetName } = useParams({
-    from: '/_authenticated/datasets/view/$datasetName',
-  })
-  const { data: dataset, isLoading, isError } = useDataset(datasetName)
+    from: "/_authenticated/datasets/view/$datasetName",
+  });
+  const { data: dataset, isLoading, isError } = useDataset(datasetName);
 
-  const [lightboxIndex, setLightboxIndex] = useState<number | null>(null)
+  const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
 
   const handleKeyboard = useCallback(
     (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && lightboxIndex !== null) setLightboxIndex(null)
+      if (e.key === "Escape" && lightboxIndex !== null) setLightboxIndex(null);
     },
     [lightboxIndex],
-  )
+  );
 
   useEffect(() => {
-    window.addEventListener('keydown', handleKeyboard)
-    return () => window.removeEventListener('keydown', handleKeyboard)
-  }, [handleKeyboard])
+    window.addEventListener("keydown", handleKeyboard);
+    return () => window.removeEventListener("keydown", handleKeyboard);
+  }, [handleKeyboard]);
 
   const lightboxImages = useMemo(
     () =>
@@ -190,20 +196,20 @@ export default function ViewDatasetPage() {
         url: datasetsApi.getImageUrl(datasetName, img.filename),
       })) ?? [],
     [dataset?.images, datasetName],
-  )
+  );
 
   const handleEdit = useCallback(() => {
     const filename =
       lightboxIndex !== null
         ? dataset?.images[lightboxIndex]?.filename
-        : undefined
-    setLightboxIndex(null)
+        : undefined;
+    setLightboxIndex(null);
     navigate({
-      to: '/datasets/edit/$datasetName',
+      to: "/datasets/edit/$datasetName",
       params: { datasetName },
       search: filename ? { filename } : { filename: undefined },
-    })
-  }, [lightboxIndex, dataset?.images, datasetName, navigate])
+    });
+  }, [lightboxIndex, dataset?.images, datasetName, navigate]);
 
   // ── Loading / error ────────────────────────────────────────────────────────
 
@@ -215,15 +221,16 @@ export default function ViewDatasetPage() {
         <SimpleGrid cols={{ base: 3, sm: 4, md: 5, lg: 6, xl: 8 }} spacing="xs">
           {Array.from({ length: 20 }).map((_, i) => (
             <Skeleton
+              // biome-ignore lint/suspicious/noArrayIndexKey: because
               key={i}
               height={0}
-              style={{ aspectRatio: '1', paddingBottom: '100%' }}
+              style={{ aspectRatio: "1", paddingBottom: "100%" }}
               radius="md"
             />
           ))}
         </SimpleGrid>
       </Stack>
-    )
+    );
   }
 
   if (isError || !dataset) {
@@ -232,7 +239,7 @@ export default function ViewDatasetPage() {
         <Button
           variant="subtle"
           leftSection={<IconArrowLeft size={15} />}
-          onClick={() => navigate({ to: '/datasets' })}
+          onClick={() => navigate({ to: "/datasets" })}
           px={4}
           size="sm"
         >
@@ -247,11 +254,11 @@ export default function ViewDatasetPage() {
           Could not load dataset <strong>{datasetName}</strong>.
         </Alert>
       </Stack>
-    )
+    );
   }
 
-  const captionPercent = Math.round(dataset.captionCoverage * 100)
-  const cls = dataset.captionLengthSummary
+  const captionPercent = Math.round(dataset.captionCoverage * 100);
+  const cls = dataset.captionLengthSummary;
 
   return (
     <>
@@ -271,18 +278,20 @@ export default function ViewDatasetPage() {
         />
       )}
 
-      <Stack gap={0} h="100%" style={{ overflow: 'hidden' }}>
+      <Stack gap={0} h="100%" style={{ overflow: "hidden" }}>
         {/* ── Header ─────────────────────────────────────────────────────── */}
         <Box
           p="lg"
           pb="md"
-          style={{ borderBottom: '1px solid var(--mantine-color-default-border)' }}
+          style={{
+            borderBottom: "1px solid var(--mantine-color-default-border)",
+          }}
         >
           <Group justify="space-between" align="flex-start">
             <Group gap="md" align="center">
               <ActionIcon
                 variant="subtle"
-                onClick={() => navigate({ to: '/datasets' })}
+                onClick={() => navigate({ to: "/datasets" })}
                 size="sm"
               >
                 <IconArrowLeft size={15} />
@@ -291,11 +300,12 @@ export default function ViewDatasetPage() {
                 <Group gap="sm" align="center">
                   <Title order={3}>{dataset.name}</Title>
                   <Badge variant="light" color="gray" size="sm">
-                    {dataset.imageCount} image{dataset.imageCount !== 1 ? 's' : ''}
+                    {dataset.imageCount} image
+                    {dataset.imageCount !== 1 ? "s" : ""}
                   </Badge>
                   <Badge
                     variant="light"
-                    color={captionPercent === 100 ? 'teal' : 'orange'}
+                    color={captionPercent === 100 ? "teal" : "orange"}
                     size="sm"
                   >
                     {captionPercent}% captioned
@@ -304,7 +314,7 @@ export default function ViewDatasetPage() {
                 <Text
                   size="xs"
                   c="dimmed"
-                  style={{ fontFamily: 'var(--mantine-font-family-monospace)' }}
+                  style={{ fontFamily: "var(--mantine-font-family-monospace)" }}
                 >
                   {dataset.path}
                 </Text>
@@ -319,7 +329,7 @@ export default function ViewDatasetPage() {
                 sections={[
                   {
                     value: captionPercent,
-                    color: captionPercent === 100 ? 'teal' : 'orange',
+                    color: captionPercent === 100 ? "teal" : "orange",
                   },
                 ]}
               />
@@ -327,7 +337,9 @@ export default function ViewDatasetPage() {
                 <Text size="xs" fw={600}>
                   {dataset.captionedCount} / {dataset.imageCount}
                 </Text>
-                <Text size="xs" c="dimmed">with captions</Text>
+                <Text size="xs" c="dimmed">
+                  with captions
+                </Text>
               </Stack>
 
               <Tooltip label="Download dataset as zip" withArrow>
@@ -346,7 +358,9 @@ export default function ViewDatasetPage() {
                 variant="light"
                 size="sm"
                 leftSection={<IconEdit size={14} />}
-                onClick={() => navigate({ to: '/datasets/edit/' + datasetName })}
+                onClick={() =>
+                  navigate({ to: "/datasets/edit/" + datasetName })
+                }
               >
                 Edit captions
               </Button>
@@ -355,9 +369,8 @@ export default function ViewDatasetPage() {
         </Box>
 
         {/* ── Scrollable body ─────────────────────────────────────────────── */}
-        <Box style={{ flex: 1, overflowY: 'auto' }}>
+        <Box style={{ flex: 1, overflowY: "auto" }}>
           <Stack gap="md" p="lg">
-
             {/* Meta card */}
             <MetaCard datasetName={datasetName} meta={dataset.meta} />
 
@@ -367,9 +380,11 @@ export default function ViewDatasetPage() {
                 <Group gap="xs" wrap="wrap">
                   <IconAlertTriangle
                     size={14}
-                    style={{ color: 'var(--mantine-color-orange-5)' }}
+                    style={{ color: "var(--mantine-color-orange-5)" }}
                   />
-                  <Text size="xs" fw={600} c="orange.5">Caption length warnings</Text>
+                  <Text size="xs" fw={600} c="orange.5">
+                    Caption length warnings
+                  </Text>
                   <Divider orientation="vertical" />
                   <Text size="xs" c="dimmed">
                     avg {cls.avgCharCount} chars · avg {cls.avgWordCount} words
@@ -386,7 +401,7 @@ export default function ViewDatasetPage() {
                         size="xs"
                         color="orange"
                         variant="light"
-                        style={{ cursor: 'default' }}
+                        style={{ cursor: "default" }}
                       >
                         {cls.longForClipCount} long for CLIP
                       </Badge>
@@ -404,7 +419,7 @@ export default function ViewDatasetPage() {
                         size="xs"
                         color="yellow"
                         variant="light"
-                        style={{ cursor: 'default' }}
+                        style={{ cursor: "default" }}
                       >
                         {cls.longForT5Count} long for T5
                       </Badge>
@@ -422,7 +437,9 @@ export default function ViewDatasetPage() {
                 </ThemeIcon>
                 <Stack gap={4} align="center">
                   <Text fw={500}>No images</Text>
-                  <Text size="sm" c="dimmed">This dataset is empty</Text>
+                  <Text size="sm" c="dimmed">
+                    This dataset is empty
+                  </Text>
                 </Stack>
               </Stack>
             ) : (
@@ -436,5 +453,5 @@ export default function ViewDatasetPage() {
         </Box>
       </Stack>
     </>
-  )
+  );
 }

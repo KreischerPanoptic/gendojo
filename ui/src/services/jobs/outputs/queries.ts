@@ -1,6 +1,7 @@
-import { useQuery } from '@tanstack/react-query'
-import { outputsApi } from './api'
-import { outputsQueryKeys } from './keys'
+import { useQuery } from "@tanstack/react-query";
+import { outputsApi } from "./api";
+import { outputsQueryKeys } from "./keys";
+import type { OutputsControllerGetOutputsData } from "@api/types.gen";
 
 /**
  * Fetches job outputs (checkpoints + sample previews).
@@ -11,16 +12,16 @@ import { outputsQueryKeys } from './keys'
  * @param interval - Poll interval in ms (default 10s)
  */
 export const useJobOutputs = (
-  jobId: string,
+  path: OutputsControllerGetOutputsData["path"],
   enabled = true,
   interval = 10_000,
 ) => {
   return useQuery({
-    queryKey: outputsQueryKeys.outputs(jobId),
-    queryFn:  () => outputsApi.getOutputs(jobId),
-    enabled:  enabled && !!jobId,
+    queryKey: outputsQueryKeys.outputs(path.id),
+    queryFn: () => outputsApi.getOutputs(path),
+    enabled: enabled && !!path.id,
     refetchInterval: interval,
     staleTime: interval - 500,
     throwOnError: false,
-  })
-}
+  });
+};

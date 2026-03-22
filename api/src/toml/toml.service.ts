@@ -1,14 +1,14 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger } from "@nestjs/common";
 import type {
   DatasetTomlDto,
   SubsetDto,
   DatasetDto,
   GeneralDto,
-} from './dto/dataset-toml.dto';
-import type { TrainTomlDto } from './dto/train-toml.dto';
-import { ARCH_META } from './types/train-toml.types';
-import type { ModelArchitecture } from '../models/types/models.types';
-import { serializeFlat } from 'src/utils/toml';
+} from "./dto/dataset-toml.dto";
+import type { TrainTomlDto } from "./dto/train-toml.dto";
+import { ARCH_META } from "./types/train-toml.types";
+import type { ModelArchitecture } from "../models/types/models.types";
+import { serializeFlat } from "../utils/toml";
 
 @Injectable()
 export class TomlService {
@@ -30,31 +30,31 @@ export class TomlService {
     if (dto.general) {
       const generalFields = this.extractGeneralFields(dto.general);
       if (Object.keys(generalFields).length > 0) {
-        sections.push('[general]');
+        sections.push("[general]");
         sections.push(serializeFlat(generalFields));
-        sections.push('');
+        sections.push("");
       }
     }
 
     for (const dataset of dto.datasets) {
       const datasetFields = this.extractDatasetFields(dataset);
-      sections.push('[[datasets]]');
+      sections.push("[[datasets]]");
       if (Object.keys(datasetFields).length > 0) {
         sections.push(serializeFlat(datasetFields));
       }
-      sections.push('');
+      sections.push("");
 
       for (const subset of dataset.subsets) {
-        sections.push('  [[datasets.subsets]]');
+        sections.push("  [[datasets.subsets]]");
         const subsetFields = this.extractSubsetFields(subset);
         sections.push(
-          '  ' + serializeFlat(subsetFields).replace(/\n/g, '\n  '),
+          "  " + serializeFlat(subsetFields).replace(/\n/g, "\n  "),
         );
-        sections.push('');
+        sections.push("");
       }
     }
 
-    return sections.join('\n').trimEnd() + '\n';
+    return sections.join("\n").trimEnd() + "\n";
   }
 
   /**
@@ -70,8 +70,8 @@ export class TomlService {
     const meta = ARCH_META[arch as ModelArchitecture];
 
     const resolved: Record<string, unknown> = { ...rest };
-    if (!resolved['network_module'] && meta) {
-      resolved['network_module'] = meta.defaultNetworkModule;
+    if (!resolved["network_module"] && meta) {
+      resolved["network_module"] = meta.defaultNetworkModule;
     }
 
     const cleaned: Record<string, unknown> = {};
@@ -82,7 +82,7 @@ export class TomlService {
     this.logger.debug(
       `Generating train TOML for arch=${arch}, keys=${Object.keys(cleaned).length}`,
     );
-    return serializeFlat(cleaned) + '\n';
+    return serializeFlat(cleaned) + "\n";
   }
 
   /**
@@ -122,20 +122,38 @@ export class TomlService {
   private extractGeneralFields(g: GeneralDto): Record<string, unknown> {
     const {
       // Dataset-scope
-      resolution, batch_size,
-      enable_bucket, min_bucket_reso, max_bucket_reso,
-      bucket_reso_steps, bucket_no_upscale,
-      interpolation_type, validation_seed,
+      resolution,
+      batch_size,
+      enable_bucket,
+      min_bucket_reso,
+      max_bucket_reso,
+      bucket_reso_steps,
+      bucket_no_upscale,
+      interpolation_type,
+      validation_seed,
       // Subset-scope — common
-      shuffle_caption, keep_tokens, keep_tokens_separator, secondary_separator,
+      shuffle_caption,
+      keep_tokens,
+      keep_tokens_separator,
+      secondary_separator,
       enable_wildcard,
-      flip_aug, color_aug, random_crop, face_crop_aug_range,
-      caption_prefix, caption_suffix, caption_separator, resize_interpolation,
+      flip_aug,
+      color_aug,
+      random_crop,
+      face_crop_aug_range,
+      caption_prefix,
+      caption_suffix,
+      caption_separator,
+      resize_interpolation,
       num_repeats,
       // Subset-scope — DreamBooth-shared (valid at [general] per docs)
-      caption_extension, cache_info, conditioning_data_dir, alpha_mask,
+      caption_extension,
+      cache_info,
+      conditioning_data_dir,
+      alpha_mask,
       // Caption dropout
-      caption_dropout_every_n_epochs, caption_dropout_rate,
+      caption_dropout_every_n_epochs,
+      caption_dropout_rate,
       caption_tag_dropout_rate,
       // Validation split
       validation_split,
@@ -144,16 +162,33 @@ export class TomlService {
     return this.compact({
       resolution: this.serializeResolution(resolution),
       batch_size,
-      enable_bucket, min_bucket_reso, max_bucket_reso,
-      bucket_reso_steps, bucket_no_upscale,
-      interpolation_type, validation_seed,
-      shuffle_caption, keep_tokens, keep_tokens_separator, secondary_separator,
+      enable_bucket,
+      min_bucket_reso,
+      max_bucket_reso,
+      bucket_reso_steps,
+      bucket_no_upscale,
+      interpolation_type,
+      validation_seed,
+      shuffle_caption,
+      keep_tokens,
+      keep_tokens_separator,
+      secondary_separator,
       enable_wildcard,
-      flip_aug, color_aug, random_crop, face_crop_aug_range,
-      caption_prefix, caption_suffix, caption_separator, resize_interpolation,
+      flip_aug,
+      color_aug,
+      random_crop,
+      face_crop_aug_range,
+      caption_prefix,
+      caption_suffix,
+      caption_separator,
+      resize_interpolation,
       num_repeats,
-      caption_extension, cache_info, conditioning_data_dir, alpha_mask,
-      caption_dropout_every_n_epochs, caption_dropout_rate,
+      caption_extension,
+      cache_info,
+      conditioning_data_dir,
+      alpha_mask,
+      caption_dropout_every_n_epochs,
+      caption_dropout_rate,
       caption_tag_dropout_rate,
       validation_split,
     });
@@ -167,17 +202,35 @@ export class TomlService {
   private extractDatasetFields(d: DatasetDto): Record<string, unknown> {
     const { subsets: _subsets, ...rest } = d;
     const {
-      resolution, batch_size,
-      enable_bucket, min_bucket_reso, max_bucket_reso,
-      bucket_reso_steps, bucket_no_upscale,
-      interpolation_type, validation_seed,
-      shuffle_caption, keep_tokens, keep_tokens_separator, secondary_separator,
+      resolution,
+      batch_size,
+      enable_bucket,
+      min_bucket_reso,
+      max_bucket_reso,
+      bucket_reso_steps,
+      bucket_no_upscale,
+      interpolation_type,
+      validation_seed,
+      shuffle_caption,
+      keep_tokens,
+      keep_tokens_separator,
+      secondary_separator,
       enable_wildcard,
-      flip_aug, color_aug, random_crop, face_crop_aug_range,
-      caption_prefix, caption_suffix, caption_separator, resize_interpolation,
+      flip_aug,
+      color_aug,
+      random_crop,
+      face_crop_aug_range,
+      caption_prefix,
+      caption_suffix,
+      caption_separator,
+      resize_interpolation,
       num_repeats,
-      caption_extension, cache_info, conditioning_data_dir, alpha_mask,
-      caption_dropout_every_n_epochs, caption_dropout_rate,
+      caption_extension,
+      cache_info,
+      conditioning_data_dir,
+      alpha_mask,
+      caption_dropout_every_n_epochs,
+      caption_dropout_rate,
       caption_tag_dropout_rate,
       validation_split,
     } = rest;
@@ -185,16 +238,33 @@ export class TomlService {
     return this.compact({
       resolution: this.serializeResolution(resolution),
       batch_size,
-      enable_bucket, min_bucket_reso, max_bucket_reso,
-      bucket_reso_steps, bucket_no_upscale,
-      interpolation_type, validation_seed,
-      shuffle_caption, keep_tokens, keep_tokens_separator, secondary_separator,
+      enable_bucket,
+      min_bucket_reso,
+      max_bucket_reso,
+      bucket_reso_steps,
+      bucket_no_upscale,
+      interpolation_type,
+      validation_seed,
+      shuffle_caption,
+      keep_tokens,
+      keep_tokens_separator,
+      secondary_separator,
       enable_wildcard,
-      flip_aug, color_aug, random_crop, face_crop_aug_range,
-      caption_prefix, caption_suffix, caption_separator, resize_interpolation,
+      flip_aug,
+      color_aug,
+      random_crop,
+      face_crop_aug_range,
+      caption_prefix,
+      caption_suffix,
+      caption_separator,
+      resize_interpolation,
       num_repeats,
-      caption_extension, cache_info, conditioning_data_dir, alpha_mask,
-      caption_dropout_every_n_epochs, caption_dropout_rate,
+      caption_extension,
+      cache_info,
+      conditioning_data_dir,
+      alpha_mask,
+      caption_dropout_every_n_epochs,
+      caption_dropout_rate,
       caption_tag_dropout_rate,
       validation_split,
     });
@@ -208,47 +278,47 @@ export class TomlService {
    */
   private extractSubsetFields(s: SubsetDto): Record<string, unknown> {
     const shared = this.compact({
-      num_repeats:                    s.num_repeats,
-      shuffle_caption:                s.shuffle_caption,
-      keep_tokens:                    s.keep_tokens,
-      keep_tokens_separator:          s.keep_tokens_separator,
-      secondary_separator:            s.secondary_separator,
-      enable_wildcard:                s.enable_wildcard,
-      flip_aug:                       s.flip_aug,
-      color_aug:                      s.color_aug,
-      random_crop:                    s.random_crop,
-      face_crop_aug_range:            s.face_crop_aug_range,
-      caption_prefix:                 s.caption_prefix,
-      caption_suffix:                 s.caption_suffix,
-      caption_separator:              s.caption_separator,
-      resize_interpolation:           s.resize_interpolation,
+      num_repeats: s.num_repeats,
+      shuffle_caption: s.shuffle_caption,
+      keep_tokens: s.keep_tokens,
+      keep_tokens_separator: s.keep_tokens_separator,
+      secondary_separator: s.secondary_separator,
+      enable_wildcard: s.enable_wildcard,
+      flip_aug: s.flip_aug,
+      color_aug: s.color_aug,
+      random_crop: s.random_crop,
+      face_crop_aug_range: s.face_crop_aug_range,
+      caption_prefix: s.caption_prefix,
+      caption_suffix: s.caption_suffix,
+      caption_separator: s.caption_separator,
+      resize_interpolation: s.resize_interpolation,
       caption_dropout_every_n_epochs: s.caption_dropout_every_n_epochs,
-      caption_dropout_rate:           s.caption_dropout_rate,
-      caption_tag_dropout_rate:       s.caption_tag_dropout_rate,
-      validation_split:               s.validation_split,
+      caption_dropout_rate: s.caption_dropout_rate,
+      caption_tag_dropout_rate: s.caption_tag_dropout_rate,
+      validation_split: s.validation_split,
       // DreamBooth-shared — valid at subset level for both methods
-      caption_extension:              s.caption_extension,
-      cache_info:                     s.cache_info,
-      conditioning_data_dir:          s.conditioning_data_dir,
-      alpha_mask:                     s.alpha_mask,
+      caption_extension: s.caption_extension,
+      cache_info: s.cache_info,
+      conditioning_data_dir: s.conditioning_data_dir,
+      alpha_mask: s.alpha_mask,
     });
 
-    if ('metadata_file' in s && s.metadata_file !== undefined) {
+    if ("metadata_file" in s && s.metadata_file !== undefined) {
       // Fine-tuning method — metadata_file presence is the discriminator
       return this.compact({
         ...shared,
-        image_dir:     s.image_dir,
+        image_dir: s.image_dir,
         metadata_file: s.metadata_file,
       });
     }
 
     // DreamBooth method
-    const db = s as import('./dto/dataset-toml.dto').DreamBoothSubsetDto;
+    const db = s as import("./dto/dataset-toml.dto").DreamBoothSubsetDto;
     return this.compact({
       ...shared,
-      image_dir:   db.image_dir,
+      image_dir: db.image_dir,
       class_tokens: db.class_tokens,
-      is_reg:       db.is_reg,
+      is_reg: db.is_reg,
     });
   }
 

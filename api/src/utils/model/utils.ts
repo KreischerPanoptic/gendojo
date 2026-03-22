@@ -4,13 +4,13 @@
 // Returns null when arch is 'unknown'.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { ARCH_ROLE_DIR } from "src/models/constants/models.constants";
-import { ModelArchitecture, ModelRole } from "src/models/types/models.types";
+import { ARCH_ROLE_DIR } from "../../models/constants/models.constants";
+import { ModelArchitecture, ModelRole } from "../../models/types/models.types";
 
 export function resolveTargetDir(
   arch: ModelArchitecture,
   role: ModelRole,
 ): string | null {
-  if (arch === 'unknown') return null;
+  if (arch === "unknown") return null;
   return ARCH_ROLE_DIR[arch][role] ?? arch;
 }

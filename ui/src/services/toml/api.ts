@@ -1,10 +1,14 @@
-import { apiClient } from '@services/client'
-import type { TrainConfig, FullDatasetDto } from '@services/jobs'
+import type { TrainConfig, FullDatasetDto } from "@services/jobs";
 import type {
-  TomlPreviewDatasetResponse,
-  TomlPreviewTrainResponse,
-  TomlValidationResult,
-} from './types'
+  DatasetTomlPreviewResponseDto,
+  TrainTomlPreviewResponseDto,
+  ValidationResultDto,
+} from "./types";
+import {
+  tomlControllerPreviewDataset,
+  tomlControllerPreviewTrain,
+  tomlControllerValidateTrain,
+} from "@api/sdk.gen";
 
 export const tomlApi = {
   /**
@@ -12,37 +16,33 @@ export const tomlApi = {
    * Generate dataset.toml string from a DatasetTomlDto.
    * Returns { toml: string }.
    */
-  previewDataset: async (dto: FullDatasetDto): Promise<TomlPreviewDatasetResponse> => {
-    const { data } = await apiClient.post<TomlPreviewDatasetResponse>(
-      '/toml/preview/dataset',
-      dto,
-    )
-    return data
-  },
+  previewDataset: (
+    body: FullDatasetDto,
+  ): Promise<DatasetTomlPreviewResponseDto> =>
+    tomlControllerPreviewDataset({ body }).then((r) => {
+      if (!r.data) throw new Error(`Can't preview dataset TOML.`);
+      return r.data;
+    }),
 
   /**
    * POST /toml/preview/train
    * Validate + generate train.toml string.
    * Returns 422 on validation failure (displayed in preview pane, not thrown).
    */
-  previewTrain: async (dto: TrainConfig): Promise<TomlPreviewTrainResponse> => {
-    const { data } = await apiClient.post<TomlPreviewTrainResponse>(
-      '/toml/preview/train',
-      dto,
-    )
-    return data
-  },
+  previewTrain: (body: TrainConfig): Promise<TrainTomlPreviewResponseDto> =>
+    tomlControllerPreviewTrain({ body }).then((r) => {
+      if (!r.data) throw new Error(`Can't preview training TOML.`);
+      return r.data;
+    }),
 
   /**
    * POST /toml/validate/train
    * Validate only — no TOML generated.
    * Always returns 200; check `valid` field.
    */
-  validateTrain: async (dto: TrainConfig): Promise<TomlValidationResult> => {
-    const { data } = await apiClient.post<TomlValidationResult>(
-      '/toml/validate/train',
-      dto,
-    )
-    return data
-  },
-}
+  validateTrain: (body: TrainConfig): Promise<ValidationResultDto> =>
+    tomlControllerValidateTrain({ body }).then((r) => {
+      if (!r.data) throw new Error(`Can't validate training TOML.`);
+      return r.data;
+    }),
+};

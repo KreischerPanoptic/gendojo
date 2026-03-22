@@ -1,7 +1,0 @@
-ignoredBuiltDependencies:
-  - '@nestjs/core'
-
-onlyBuiltDependencies:
-  - '@scarf/scarf'
-  - better-sqlite3
-  - unrs-resolver

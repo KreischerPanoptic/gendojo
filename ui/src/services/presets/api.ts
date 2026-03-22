@@ -1,12 +1,20 @@
-import { apiClient } from '@services/client'
-import type { ModelArchitecture } from '@services/models'
+import {
+  presetsControllerCreate,
+  presetsControllerDelete,
+  presetsControllerGetOne,
+  presetsControllerGrouped,
+  presetsControllerList,
+  presetsControllerUpdate,
+} from "@api/sdk.gen";
 import type {
-  CreatePresetDto,
-  PresetsGrouped,
-  PresetTier,
-  TrainingPreset,
-  UpdatePresetDto,
-} from './types'
+  PresetsControllerCreateData,
+  PresetsControllerGetOneData,
+  PresetsControllerGroupedData,
+  PresetsControllerGroupedResponse,
+  PresetsControllerListData,
+  PresetsControllerUpdateData,
+  TrainingPresetDto,
+} from "@api/types.gen";
 
 export const presetsApi = {
   /**
@@ -15,47 +23,53 @@ export const presetsApi = {
    * GET /presets?arch=flux&tier=balanced
    * GET /presets?source=user
    */
-  list: async (params?: {
-    arch?: ModelArchitecture
-    tier?: PresetTier
-    source?: 'system' | 'user'
-  }): Promise<TrainingPreset[]> => {
-    const { data } = await apiClient.get<{ presets: TrainingPreset[] }>('/presets', { params })
-    return data.presets
-  },
+  list: (
+    query?: PresetsControllerListData["query"],
+  ): Promise<TrainingPresetDto[]> =>
+    presetsControllerList({ query }).then((r) => {
+      return r.data ? (r.data.presets ?? []) : [];
+    }),
 
   /**
    * GET /presets/grouped
    * GET /presets/grouped?arch=flux
    */
-  grouped: async (arch?: ModelArchitecture): Promise<PresetsGrouped> => {
-    const { data } = await apiClient.get<{ grouped: PresetsGrouped }>(
-      '/presets/grouped',
-      arch ? { params: { arch } } : undefined,
-    )
-    return data.grouped
-  },
+  grouped: (
+    query: PresetsControllerGroupedData["query"],
+  ): Promise<PresetsControllerGroupedResponse["grouped"]> =>
+    presetsControllerGrouped({ query }).then((r) => {
+      return r.data?.grouped;
+    }),
 
   /** GET /presets/:id */
-  getOne: async (id: string): Promise<TrainingPreset> => {
-    const { data } = await apiClient.get<TrainingPreset>(`/presets/${id}`)
-    return data
-  },
+  getOne: (
+    path: PresetsControllerGetOneData["path"],
+  ): Promise<TrainingPresetDto> =>
+    presetsControllerGetOne({ path }).then((r) => {
+      if (!r.data) throw new Error(`Can't get preset.`);
+      return r.data;
+    }),
 
   /** POST /presets → 201 */
-  create: async (dto: CreatePresetDto): Promise<TrainingPreset> => {
-    const { data } = await apiClient.post<TrainingPreset>('/presets', dto)
-    return data
-  },
+  create: (
+    body: PresetsControllerCreateData["body"],
+  ): Promise<TrainingPresetDto> =>
+    presetsControllerCreate({ body }).then((r) => {
+      if (!r.data) throw new Error(`Can't create preset.`);
+      return r.data;
+    }),
 
   /** PUT /presets/:id → 200. Returns 422 for system presets. */
-  update: async (id: string, dto: UpdatePresetDto): Promise<TrainingPreset> => {
-    const { data } = await apiClient.put<TrainingPreset>(`/presets/${id}`, dto)
-    return data
-  },
+  update: (
+    path: PresetsControllerUpdateData["path"],
+    body: PresetsControllerUpdateData["body"],
+  ): Promise<TrainingPresetDto> =>
+    presetsControllerUpdate({ path, body }).then((r) => {
+      if (!r.data) throw new Error(`Can't update preset.`);
+      return r.data;
+    }),
 
   /** DELETE /presets/:id → 204. Returns 422 for system presets. */
-  delete: async (id: string): Promise<void> => {
-    await apiClient.delete(`/presets/${id}`)
-  },
-}
+  delete: (path: PresetsControllerUpdateData["path"]): Promise<void> =>
+    presetsControllerDelete({ path }).then(),
+};

@@ -1,11 +1,18 @@
-import { apiClient } from '@services/client'
+import {
+  jobsControllerCreate,
+  jobsControllerGetLogs,
+  jobsControllerGetOne,
+  jobsControllerKill,
+  jobsControllerList,
+} from "@api/sdk.gen";
 import type {
-  CreateJobRequest,
-  JobDetail,
-  JobLogsResponse,
-  JobSummary,
-  KillJobResponse,
-} from './types'
+  JobDetailResponseDto,
+  JobLogsResponseDto,
+  JobsControllerCreateData,
+  JobsControllerGetOneData,
+  JobSummaryResponseDto,
+  KillJobResponseDto,
+} from "@api/types.gen";
 
 export const jobsApi = {
   /**
@@ -16,46 +23,56 @@ export const jobsApi = {
    * @throws 422 if train config validation fails
    * @throws 409 if max concurrent jobs reached
    */
-  create: async (request: CreateJobRequest): Promise<JobDetail> => {
-    const { data } = await apiClient.post<JobDetail>('/jobs', request)
-    return data
-  },
+  create: (
+    body: JobsControllerCreateData["body"],
+  ): Promise<JobDetailResponseDto> =>
+    jobsControllerCreate({ body }).then((r) => {
+      if (!r.data) throw new Error(`Can't start new job.`);
+      return r.data;
+    }),
 
   /**
    * GET /jobs
    * Returns all jobs without log buffers (cheap for polling / list view).
    */
-  list: async (): Promise<JobSummary[]> => {
-    const { data } = await apiClient.get<JobSummary[]>('/jobs')
-    return data
-  },
+  list: (): Promise<JobSummaryResponseDto[]> =>
+    jobsControllerList({}).then((r) => r.data ?? []),
 
   /**
    * GET /jobs/:id
    * Returns full job detail including log buffer.
    */
-  getOne: async (id: string): Promise<JobDetail> => {
-    const { data } = await apiClient.get<JobDetail>(`/jobs/${id}`)
-    return data
-  },
+  getOne: (
+    path: JobsControllerGetOneData["path"],
+  ): Promise<JobDetailResponseDto> =>
+    jobsControllerGetOne({ path }).then((r) => {
+      if (!r.data) throw new Error(`Can't find job.`);
+      return r.data;
+    }),
 
   /**
    * GET /jobs/:id/logs
    * Returns only the log buffer — lighter than getOne for polling.
    * Use this when the WebSocket connection is unavailable.
    */
-  getLogs: async (id: string): Promise<JobLogsResponse> => {
-    const { data } = await apiClient.get<JobLogsResponse>(`/jobs/${id}/logs`)
-    return data
-  },
+  getLogs: (
+    path: JobsControllerGetOneData["path"],
+  ): Promise<JobLogsResponseDto> =>
+    jobsControllerGetLogs({ path }).then((r) => {
+      if (!r.data) throw new Error(`Can't find job logs.`);
+      return r.data;
+    }),
 
   /**
    * DELETE /jobs/:id
    * Sends SIGTERM to the running process (SIGKILL after 5s).
    * Idempotent — safe to call on already-finished jobs.
    */
-  kill: async (id: string): Promise<KillJobResponse> => {
-    const { data } = await apiClient.delete<KillJobResponse>(`/jobs/${id}`)
-    return data
-  },
-}
+  kill: async (
+    path: JobsControllerGetOneData["path"],
+  ): Promise<KillJobResponseDto> =>
+    jobsControllerKill({ path }).then((r) => {
+      if (!r.data) throw new Error(`Can't kill job.`);
+      return r.data;
+    }),
+};

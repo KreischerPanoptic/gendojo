@@ -4,25 +4,28 @@ import {
   Logger,
   NotFoundException,
   OnModuleInit,
-} from '@nestjs/common';
-import * as https from 'https';
-import * as http from 'http';
-import * as fs from 'fs';
-import * as fsp from 'fs/promises';
-import * as path from 'path';
-import { randomUUID } from 'crypto';
+} from "@nestjs/common";
+import * as https from "https";
+import * as http from "http";
+import * as fs from "fs";
+import * as fsp from "fs/promises";
+import * as path from "path";
+import { randomUUID } from "crypto";
 
-import { PathsConfig } from '../config/paths.config';
-import { ModelsService } from '../models/models.service';
-import { ARCH_ROLE_DIR } from '../models/constants/models.constants';
-import type { ModelArchitecture, ModelRole } from '../models/types/models.types';
-import type { DownloadJob, DownloadSource } from './types/downloader.types';
-import { StartDownloadDto } from './dto/start-download.dto';
-import { findPreset, getPresetsByArch } from './presets/download.presets';
-import type { ModelPreset } from './types/downloader.types';
-import { TokensService } from 'src/settings/tokens/tokens.service';
+import { PathsConfig } from "../config/paths.config";
+import { ModelsService } from "../models/models.service";
+import { ARCH_ROLE_DIR } from "../models/constants/models.constants";
+import type {
+  ModelArchitecture,
+  ModelRole,
+} from "../models/types/models.types";
+import type { DownloadJob, DownloadSource } from "./types/downloader.types";
+import { StartDownloadDto } from "./dto/start-download.dto";
+import { findPreset, getPresetsByArch } from "./presets/download.presets";
+import type { ModelPreset } from "./types/downloader.types";
+import { TokensService } from "../settings/tokens/tokens.service";
 
-const HF_BASE = 'https://huggingface.co';
+const HF_BASE = "https://huggingface.co";
 
 @Injectable()
 export class DownloaderService implements OnModuleInit {
@@ -85,7 +88,7 @@ export class DownloaderService implements OnModuleInit {
         role: resolved.role,
         filename: resolved.filename,
         destination,
-        status: 'skipped',
+        status: "skipped",
         bytesDownloaded: 0,
         bytesTotal: 0,
         progressPercent: 100,
@@ -108,7 +111,7 @@ export class DownloaderService implements OnModuleInit {
       role: resolved.role,
       filename: resolved.filename,
       destination,
-      status: 'pending',
+      status: "pending",
       bytesDownloaded: 0,
       bytesTotal: 0,
       progressPercent: 0,
@@ -121,7 +124,9 @@ export class DownloaderService implements OnModuleInit {
 
     // Fire-and-forget — client polls GET /downloader/:id for progress
     this.runDownload(job).catch((err) => {
-      this.logger.error(`Download failed [${job.id}]: ${(err as Error).message}`);
+      this.logger.error(
+        `Download failed [${job.id}]: ${(err as Error).message}`,
+      );
     });
 
     return job;
@@ -132,15 +137,15 @@ export class DownloaderService implements OnModuleInit {
     const job = this.getJob(id);
 
     if (
-      job.status === 'completed' ||
-      job.status === 'failed' ||
-      job.status === 'skipped'
+      job.status === "completed" ||
+      job.status === "failed" ||
+      job.status === "skipped"
     ) {
       throw new BadRequestException(`Cannot cancel a ${job.status} download.`);
     }
 
     this.aborts.get(id)?.abort();
-    this.patch(job, { status: 'cancelled', completedAt: new Date() });
+    this.patch(job, { status: "cancelled", completedAt: new Date() });
     this.logger.log(`Download cancelled [${id}]`);
     return job;
   }
@@ -172,7 +177,7 @@ export class DownloaderService implements OnModuleInit {
 
     if (!dto.url || !dto.arch || !dto.role) {
       throw new BadRequestException(
-        'Provide either presetId or (url + arch + role).',
+        "Provide either presetId or (url + arch + role).",
       );
     }
 
@@ -210,7 +215,11 @@ export class DownloaderService implements OnModuleInit {
   }
 
   private buildPresetUrl(preset: ModelPreset): string {
-    if (preset.source === 'huggingface' && preset.hfRepoId && preset.hfFilename) {
+    if (
+      preset.source === "huggingface" &&
+      preset.hfRepoId &&
+      preset.hfFilename
+    ) {
       // HF token goes in the Authorization header, not the URL
       return `${HF_BASE}/${preset.hfRepoId}/resolve/main/${preset.hfFilename}`;
     }
@@ -223,16 +232,16 @@ export class DownloaderService implements OnModuleInit {
   }
 
   private detectSource(url: string): DownloadSource {
-    if (url.includes('huggingface.co')) return 'huggingface';
-    if (url.includes('civitai.com')) return 'civitai';
-    return 'direct';
+    if (url.includes("huggingface.co")) return "huggingface";
+    if (url.includes("civitai.com")) return "civitai";
+    return "direct";
   }
 
   private filenameFromUrl(url: string): string {
     try {
-      return path.basename(new URL(url).pathname) || 'model.safetensors';
+      return path.basename(new URL(url).pathname) || "model.safetensors";
     } catch {
-      return 'model.safetensors';
+      return "model.safetensors";
     }
   }
 
@@ -241,13 +250,13 @@ export class DownloaderService implements OnModuleInit {
   private async runDownload(job: DownloadJob): Promise<void> {
     const abort = new AbortController();
     this.aborts.set(job.id, abort);
-    this.patch(job, { status: 'downloading' });
+    this.patch(job, { status: "downloading" });
 
     try {
       await this.fetchToFile(job, abort.signal);
 
       this.patch(job, {
-        status: 'completed',
+        status: "completed",
         progressPercent: 100,
         completedAt: new Date(),
       });
@@ -262,13 +271,13 @@ export class DownloaderService implements OnModuleInit {
     } catch (err) {
       const msg = (err as Error).message ?? String(err);
 
-      if (msg === 'CANCELLED') {
+      if (msg === "CANCELLED") {
         // cancel() already patched the status
         return;
       }
 
       this.patch(job, {
-        status: 'failed',
+        status: "failed",
         error: msg,
         completedAt: new Date(),
       });
@@ -287,10 +296,10 @@ export class DownloaderService implements OnModuleInit {
    */
   private fetchToFile(job: DownloadJob, signal: AbortSignal): Promise<void> {
     return new Promise<void>((resolve, reject) => {
-      if (signal.aborted) return reject(new Error('CANCELLED'));
+      if (signal.aborted) return reject(new Error("CANCELLED"));
 
-      const hfToken = this.tokensService.getToken('hfToken');
-      const civitaiToken = this.tokensService.getToken('civitaiToken');
+      const hfToken = this.tokensService.getToken("hfToken");
+      const civitaiToken = this.tokensService.getToken("civitaiToken");
 
       const follow = (url: string, redirectsLeft: number): void => {
         let parsed: URL;
@@ -300,17 +309,17 @@ export class DownloaderService implements OnModuleInit {
           return reject(new Error(`Invalid URL: ${url}`));
         }
 
-        const transport = parsed.protocol === 'https:' ? https : http;
+        const transport = parsed.protocol === "https:" ? https : http;
 
         const headers: Record<string, string> = {
-          'User-Agent': 'GenDojo/1.0 (model downloader)',
+          "User-Agent": "GenDojo/1.0 (model downloader)",
         };
 
-        if (job.source === 'huggingface' && hfToken) {
-          headers['Authorization'] = `Bearer ${hfToken}`;
+        if (job.source === "huggingface" && hfToken) {
+          headers["Authorization"] = `Bearer ${hfToken}`;
         }
-        if (job.source === 'civitai' && civitaiToken) {
-          headers['Authorization'] = `Bearer ${civitaiToken}`;
+        if (job.source === "civitai" && civitaiToken) {
+          headers["Authorization"] = `Bearer ${civitaiToken}`;
         }
 
         const req = transport.get(url, { headers }, (res) => {
@@ -322,7 +331,8 @@ export class DownloaderService implements OnModuleInit {
             res.headers.location
           ) {
             res.resume();
-            if (redirectsLeft === 0) return reject(new Error('Too many redirects'));
+            if (redirectsLeft === 0)
+              return reject(new Error("Too many redirects"));
             follow(res.headers.location, redirectsLeft - 1);
             return;
           }
@@ -331,17 +341,19 @@ export class DownloaderService implements OnModuleInit {
             res.resume();
             return reject(
               new Error(
-                `HTTP ${res.statusCode}: Access denied.${job.source === 'huggingface' ? ' Set HF_TOKEN and accept the model license on HuggingFace.' : ''}`,
+                `HTTP ${res.statusCode}: Access denied.${job.source === "huggingface" ? " Set HF_TOKEN and accept the model license on HuggingFace." : ""}`,
               ),
             );
           }
 
           if (res.statusCode !== 200) {
             res.resume();
-            return reject(new Error(`HTTP ${res.statusCode}: ${res.statusMessage}`));
+            return reject(
+              new Error(`HTTP ${res.statusCode}: ${res.statusMessage}`),
+            );
           }
 
-          const total = parseInt(res.headers['content-length'] ?? '0', 10);
+          const total = parseInt(res.headers["content-length"] ?? "0", 10);
           this.patch(job, { bytesTotal: total });
 
           const fileStream = fs.createWriteStream(job.destination);
@@ -351,33 +363,37 @@ export class DownloaderService implements OnModuleInit {
             res.destroy();
             fileStream.destroy();
             fsp.unlink(job.destination).catch(() => null);
-            reject(new Error('CANCELLED'));
+            reject(new Error("CANCELLED"));
           };
-          signal.addEventListener('abort', onAbort, { once: true });
+          signal.addEventListener("abort", onAbort, { once: true });
 
-          res.on('data', (chunk: Buffer) => {
+          res.on("data", (chunk: Buffer) => {
             const downloaded = job.bytesDownloaded + chunk.length;
-            const percent = total > 0 ? Math.floor((downloaded / total) * 100) : -1;
-            this.patch(job, { bytesDownloaded: downloaded, progressPercent: percent });
+            const percent =
+              total > 0 ? Math.floor((downloaded / total) * 100) : -1;
+            this.patch(job, {
+              bytesDownloaded: downloaded,
+              progressPercent: percent,
+            });
           });
 
           res.pipe(fileStream);
 
-          fileStream.once('finish', () => {
-            signal.removeEventListener('abort', onAbort);
+          fileStream.once("finish", () => {
+            signal.removeEventListener("abort", onAbort);
             resolve();
           });
-          fileStream.once('error', (err) => {
-            signal.removeEventListener('abort', onAbort);
+          fileStream.once("error", (err) => {
+            signal.removeEventListener("abort", onAbort);
             reject(err);
           });
-          res.once('error', (err) => {
-            signal.removeEventListener('abort', onAbort);
+          res.once("error", (err) => {
+            signal.removeEventListener("abort", onAbort);
             reject(err);
           });
         });
 
-        req.once('error', reject);
+        req.once("error", reject);
       };
 
       follow(job.url, 10);

@@ -1,5 +1,9 @@
-import { apiClient } from '@services/client'
-import type { JobOutputs } from './types'
+import { apiClient } from "@services/client";
+import { outputsControllerGetOutputs } from "@api/sdk.gen";
+import type {
+  JobOutputsDto,
+  OutputsControllerGetOutputsData,
+} from "@api/types.gen";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -7,8 +11,9 @@ import type { JobOutputs } from './types'
 
 const getBaseURL = (): string =>
   (import.meta.env.DEV
-    ? (import.meta.env.VITE_API_URL as string | undefined) ?? 'http://localhost:3000'
-    : '') + '/api'
+    ? ((import.meta.env.VITE_API_URL as string | undefined) ??
+      "http://localhost:3000")
+    : "") + "/api";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // API
@@ -19,10 +24,13 @@ export const outputsApi = {
    * GET /jobs/:id/outputs
    * Safe to poll — returns empty lists while training is in progress.
    */
-  getOutputs: async (jobId: string): Promise<JobOutputs> => {
-    const { data } = await apiClient.get<JobOutputs>(`/jobs/${jobId}/outputs`)
-    return data
-  },
+  getOutputs: (
+    path: OutputsControllerGetOutputsData["path"],
+  ): Promise<JobOutputsDto> =>
+    outputsControllerGetOutputs({ path }).then((r) => {
+      if (!r.data) throw new Error(`Can't get outputs of job.`);
+      return r.data;
+    }),
 
   /**
    * Direct URL for a sample preview PNG.
@@ -36,19 +44,22 @@ export const outputsApi = {
    * Uses apiClient so the Authorization header is attached.
    * Triggers browser download via a blob URL.
    */
-  downloadCheckpoint: async (jobId: string, filename: string): Promise<void> => {
+  downloadCheckpoint: async (
+    jobId: string,
+    filename: string,
+  ): Promise<void> => {
     const response = await apiClient.get(
       `/jobs/${jobId}/outputs/download/${encodeURIComponent(filename)}`,
-      { responseType: 'blob' },
-    )
-    const blob = response.data as Blob
-    const url  = URL.createObjectURL(blob)
-    const a    = document.createElement('a')
-    a.href     = url
-    a.download = filename
-    document.body.appendChild(a)
-    a.click()
-    document.body.removeChild(a)
-    URL.revokeObjectURL(url)
+      { responseType: "blob" },
+    );
+    const blob = response.data as Blob;
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
   },
-}
+};

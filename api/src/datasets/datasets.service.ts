@@ -4,21 +4,21 @@ import {
   NotFoundException,
   ConflictException,
   BadRequestException,
-} from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
-import { DeepPartial, Repository } from 'typeorm';
-import { randomUUID } from 'crypto';
-import * as os from 'os';
-import * as fs from 'fs/promises';
-import * as fsSync from 'fs';
-import * as path from 'path';
-import * as unzipper from 'unzipper';
-import { Readable } from 'stream';
-import { pipeline } from 'stream/promises';
-import archiver from 'archiver';
+} from "@nestjs/common";
+import { InjectRepository } from "@nestjs/typeorm";
+import { DeepPartial, Repository } from "typeorm";
+import { randomUUID } from "crypto";
+import * as os from "os";
+import * as fs from "fs/promises";
+import * as fsSync from "fs";
+import * as path from "path";
+import * as unzipper from "unzipper";
+import { Readable } from "stream";
+import { pipeline } from "stream/promises";
+import archiver from "archiver";
 
-import { PathsConfig } from '../config/paths.config';
-import { DatasetMetadata } from './entities/dataset-metadata.entity';
+import { PathsConfig } from "../config/paths.config";
+import { DatasetMetadata } from "./entities/dataset-metadata.entity";
 import {
   CAPTION_LENGTH_THRESHOLDS,
   type CaptionLengthSummary,
@@ -33,8 +33,8 @@ import {
   type PrependMode,
   type PrependTokenResult,
   type UploadResult,
-} from './types/datasets.types';
-import { isCaption, isImage, stem } from 'src/utils/dataset';
+} from "./types/datasets.types";
+import { isCaption, isImage, stem } from "../utils/dataset";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Constants
@@ -124,9 +124,7 @@ export class DatasetsService {
     const stat = await fs.stat(datasetPath);
     const files = await fs.readdir(datasetPath);
 
-    const captionStems = new Set(
-      files.filter(isCaption).map((f) => stem(f)),
-    );
+    const captionStems = new Set(files.filter(isCaption).map((f) => stem(f)));
 
     const images: DatasetImage[] = [];
     for (const file of files) {
@@ -138,7 +136,7 @@ export class DatasetsService {
       let captionStats: CaptionStats | null = null;
       if (hasCaption) {
         const captionPath = path.join(datasetPath, `${stem(file)}.txt`);
-        const text = await fs.readFile(captionPath, 'utf8').catch(() => '');
+        const text = await fs.readFile(captionPath, "utf8").catch(() => "");
         captionStats = this.computeCaptionStats(text);
       }
 
@@ -153,13 +151,16 @@ export class DatasetsService {
 
     // Sort: numeric filenames first (by number), otherwise lexicographic
     const isAllNumbered = images.every(
-      (a) => !isNaN(Number(a.filename.replace(/\b0+/g, '').replace(/\.[^/.]+$/, ''))),
+      (a) =>
+        !isNaN(
+          Number(a.filename.replace(/\b0+/g, "").replace(/\.[^/.]+$/, "")),
+        ),
     );
     if (isAllNumbered) {
       images.sort(
         (a, b) =>
-          Number(a.filename.replace(/\b0+/g, '').replace(/\.[^/.]+$/, '')) -
-          Number(b.filename.replace(/\b0+/g, '').replace(/\.[^/.]+$/, '')),
+          Number(a.filename.replace(/\b0+/g, "").replace(/\.[^/.]+$/, "")) -
+          Number(b.filename.replace(/\b0+/g, "").replace(/\.[^/.]+$/, "")),
       );
     } else {
       images.sort((a, b) => a.filename.localeCompare(b.filename));
@@ -171,7 +172,9 @@ export class DatasetsService {
 
     const captionLengthSummary: CaptionLengthSummary | null =
       captionedCount > 0
-        ? this.computeCaptionLengthSummary(captionedImages.map((i) => i.captionStats!))
+        ? this.computeCaptionLengthSummary(
+            captionedImages.map((i) => i.captionStats!),
+          )
         : null;
 
     return {
@@ -351,9 +354,12 @@ export class DatasetsService {
 
     const captionPath = path.join(datasetPath, `${stem(imageName)}.txt`);
     try {
-      const text = await fs.readFile(captionPath, 'utf8');
+      const text = await fs.readFile(captionPath, "utf8");
       const trimmed = text.trim();
-      return { caption: trimmed, captionStats: this.computeCaptionStats(trimmed) };
+      return {
+        caption: trimmed,
+        captionStats: this.computeCaptionStats(trimmed),
+      };
     } catch {
       return { caption: null, captionStats: null };
     }
@@ -387,7 +393,7 @@ export class DatasetsService {
     }
 
     const captionPath = path.join(datasetPath, `${stem(imageName)}.txt`);
-    await fs.writeFile(captionPath, caption, 'utf8');
+    await fs.writeFile(captionPath, caption, "utf8");
     this.logger.debug(`Wrote caption: ${captionPath}`);
 
     return { captionPath, captionStats: this.computeCaptionStats(caption) };
@@ -416,7 +422,7 @@ export class DatasetsService {
       this.logger.debug(`Deleted caption: ${captionPath}`);
       return { deleted: true };
     } catch (err: unknown) {
-      if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") {
         return { deleted: false };
       }
       throw err;
@@ -441,7 +447,7 @@ export class DatasetsService {
     skipExisting: boolean,
   ): Promise<PrependTokenResult> {
     if (!token?.trim()) {
-      throw new BadRequestException('Activation token must not be empty');
+      throw new BadRequestException("Activation token must not be empty");
     }
 
     const datasetPath = this.datasetPath(name);
@@ -461,7 +467,7 @@ export class DatasetsService {
 
       let existing: string | null = null;
       try {
-        existing = (await fs.readFile(captionPath, 'utf8')).trim();
+        existing = (await fs.readFile(captionPath, "utf8")).trim();
       } catch {
         missing++;
         continue;
@@ -475,8 +481,12 @@ export class DatasetsService {
         continue;
       }
 
-      const newCaption = this.buildPrependedCaption(normalizedToken, existing, mode);
-      await fs.writeFile(captionPath, newCaption, 'utf8');
+      const newCaption = this.buildPrependedCaption(
+        normalizedToken,
+        existing,
+        mode,
+      );
+      await fs.writeFile(captionPath, newCaption, "utf8");
       updated++;
     }
 
@@ -506,7 +516,10 @@ export class DatasetsService {
    * Creates a new record with defaults if one doesn't exist yet.
    * Throws NotFoundException if the dataset directory does not exist.
    */
-  async updateMeta(name: string, update: DatasetMetaUpdate): Promise<DatasetMeta> {
+  async updateMeta(
+    name: string,
+    update: DatasetMetaUpdate,
+  ): Promise<DatasetMeta> {
     await this.assertExists(name, this.datasetPath(name));
 
     const existing = await this.metaRepo.findOne({ where: { name } });
@@ -522,7 +535,10 @@ export class DatasetsService {
     }
 
     // No record yet — create one seeded with the update
-    const created = this.metaRepo.create({ name, ...update } as DeepPartial<DatasetMetadata>);
+    const created = this.metaRepo.create({
+      name,
+      ...update,
+    } as DeepPartial<DatasetMetadata>);
     const saved = await this.metaRepo.save(created);
     this.logger.log(`Created metadata record for dataset "${name}"`);
     return this.entityToMeta(saved);
@@ -540,7 +556,9 @@ export class DatasetsService {
     const result = await this.detectCaptionTypeFromDir(files, datasetPath);
 
     // Persist detected type — updateMeta handles upsert
-    const meta = await this.updateMeta(name, { captionType: result.captionType });
+    const meta = await this.updateMeta(name, {
+      captionType: result.captionType,
+    });
 
     return { ...result, meta };
   }
@@ -554,14 +572,17 @@ export class DatasetsService {
    * Includes images, captions and the DB metadata serialised as meta.json.
    * No temp file is created — streams directly.
    */
-  async exportZip(name: string, res: import('express').Response): Promise<void> {
+  async exportZip(
+    name: string,
+    res: import("express").Response,
+  ): Promise<void> {
     const datasetPath = this.datasetPath(name);
     await this.assertExists(name, datasetPath);
 
-    const archive = archiver('zip', { zlib: { level: 6 } });
+    const archive = archiver("zip", { zlib: { level: 6 } });
 
-    res.setHeader('Content-Type', 'application/zip');
-    res.setHeader('Content-Disposition', `attachment; filename="${name}.zip"`);
+    res.setHeader("Content-Type", "application/zip");
+    res.setHeader("Content-Disposition", `attachment; filename="${name}.zip"`);
 
     archive.pipe(res);
     archive.directory(datasetPath, false);
@@ -569,7 +590,9 @@ export class DatasetsService {
     // Append DB metadata as a JSON sidecar so exports are self-describing
     const meta = await this.findMetaByName(name);
     if (meta) {
-      archive.append(JSON.stringify(meta, null, 2), { name: 'dataset.meta.json' });
+      archive.append(JSON.stringify(meta, null, 2), {
+        name: "dataset.meta.json",
+      });
     }
 
     await archive.finalize();
@@ -673,7 +696,7 @@ export class DatasetsService {
       );
     }
 
-    const chunkFilename = `chunk-${String(chunkIndex).padStart(8, '0')}`;
+    const chunkFilename = `chunk-${String(chunkIndex).padStart(8, "0")}`;
     await fs.writeFile(path.join(tempDir, chunkFilename), buffer);
     this.logger.debug(`Chunk ${chunkIndex} saved for session ${uploadId}`);
 
@@ -696,11 +719,14 @@ export class DatasetsService {
       );
     }
 
-    const assembledPath = path.join(tempDir, 'assembled.zip');
+    const assembledPath = path.join(tempDir, "assembled.zip");
     const writeStream = fsSync.createWriteStream(assembledPath);
 
     for (let i = 0; i < totalChunks; i++) {
-      const chunkPath = path.join(tempDir, `chunk-${String(i).padStart(8, '0')}`);
+      const chunkPath = path.join(
+        tempDir,
+        `chunk-${String(i).padStart(8, "0")}`,
+      );
       let chunkBuffer: Buffer;
       try {
         chunkBuffer = await fs.readFile(chunkPath);
@@ -716,8 +742,8 @@ export class DatasetsService {
 
     await new Promise<void>((resolve, reject) => {
       writeStream.end();
-      writeStream.on('finish', resolve);
-      writeStream.on('error', (err) => reject(err as Error));
+      writeStream.on("finish", resolve);
+      writeStream.on("error", (err) => reject(err as Error));
     });
 
     let result: UploadResult;
@@ -739,7 +765,7 @@ export class DatasetsService {
   }
 
   private chunkTempDir(uploadId: string): string {
-    return path.join(os.tmpdir(), 'gendojo-uploads', uploadId);
+    return path.join(os.tmpdir(), "gendojo-uploads", uploadId);
   }
 
   private async ensureDatasetsRoot(): Promise<void> {
@@ -753,7 +779,7 @@ export class DatasetsService {
         throw new NotFoundException(`Dataset "${name}" is not a directory`);
       }
     } catch (err: unknown) {
-      if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") {
         throw new NotFoundException(`Dataset "${name}" not found`);
       }
       throw err;
@@ -775,14 +801,17 @@ export class DatasetsService {
 
     const imageFiles = files.filter(isImage);
     const captionStems = new Set(files.filter(isCaption).map((f) => stem(f)));
-    const captionedCount = imageFiles.filter((f) => captionStems.has(stem(f))).length;
+    const captionedCount = imageFiles.filter((f) =>
+      captionStems.has(stem(f)),
+    ).length;
 
     return {
       name,
       path: fullPath,
       imageCount: imageFiles.length,
       captionedCount,
-      captionCoverage: imageFiles.length > 0 ? captionedCount / imageFiles.length : 0,
+      captionCoverage:
+        imageFiles.length > 0 ? captionedCount / imageFiles.length : 0,
       updatedAt: mtime.toISOString(),
       meta,
     };
@@ -796,7 +825,11 @@ export class DatasetsService {
   private async extractZipBuffer(
     zipBuffer: Buffer,
     datasetPath: string,
-  ): Promise<{ imageCount: number; captionCount: number; skippedFiles: string[] }> {
+  ): Promise<{
+    imageCount: number;
+    captionCount: number;
+    skippedFiles: string[];
+  }> {
     const directory = await unzipper.Open.buffer(zipBuffer);
     return this.extractEntries(directory.files, datasetPath);
   }
@@ -819,10 +852,8 @@ export class DatasetsService {
     await fs.mkdir(datasetPath, { recursive: true });
 
     const directory = await unzipper.Open.file(zipPath);
-    const { imageCount, captionCount, skippedFiles } = await this.extractEntries(
-      directory.files,
-      datasetPath,
-    );
+    const { imageCount, captionCount, skippedFiles } =
+      await this.extractEntries(directory.files, datasetPath);
 
     this.logger.log(
       `Dataset "${name}": extracted ${imageCount} images + ${captionCount} captions from file, skipped ${skippedFiles.length}`,
@@ -847,7 +878,11 @@ export class DatasetsService {
   private async extractEntries(
     entries: unzipper.File[],
     destDir: string,
-  ): Promise<{ imageCount: number; captionCount: number; skippedFiles: string[] }> {
+  ): Promise<{
+    imageCount: number;
+    captionCount: number;
+    skippedFiles: string[];
+  }> {
     const skippedFiles: string[] = [];
     let imageCount = 0;
     let captionCount = 0;
@@ -855,20 +890,21 @@ export class DatasetsService {
     // Detect single top-level folder → strip prefix for automatic flattening
     const topLevelDirs = new Set<string>();
     for (const entry of entries) {
-      if (entry.type === 'Directory') continue;
-      const parts = entry.path.split('/');
+      if (entry.type === "Directory") continue;
+      const parts = entry.path.split("/");
       if (parts.length > 1) topLevelDirs.add(parts[0]);
     }
-    const stripPrefix = topLevelDirs.size === 1 ? [...topLevelDirs][0] + '/' : null;
+    const stripPrefix =
+      topLevelDirs.size === 1 ? [...topLevelDirs][0] + "/" : null;
 
     for (const entry of entries) {
-      if (entry.type === 'Directory') continue;
+      if (entry.type === "Directory") continue;
 
       // Skip macOS and hidden junk
       if (
-        entry.path.includes('__MACOSX') ||
-        entry.path.includes('.DS_Store') ||
-        path.basename(entry.path).startsWith('.')
+        entry.path.includes("__MACOSX") ||
+        entry.path.includes(".DS_Store") ||
+        path.basename(entry.path).startsWith(".")
       ) {
         continue;
       }
@@ -879,7 +915,7 @@ export class DatasetsService {
       }
 
       // Skip files still nested after prefix stripping
-      if (relativePath.includes('/')) {
+      if (relativePath.includes("/")) {
         skippedFiles.push(entry.path);
         continue;
       }
@@ -908,8 +944,10 @@ export class DatasetsService {
         `Invalid dataset name "${name}". Use only letters, numbers, hyphens, underscores.`,
       );
     }
-    if (name.includes('..') || name.includes('/') || name.includes('\\')) {
-      throw new BadRequestException('Dataset name must not contain path separators');
+    if (name.includes("..") || name.includes("/") || name.includes("\\")) {
+      throw new BadRequestException(
+        "Dataset name must not contain path separators",
+      );
     }
   }
 
@@ -961,7 +999,9 @@ export class DatasetsService {
       if (!existing) {
         const record = this.metaRepo.create({ name });
         await this.metaRepo.save(record);
-        this.logger.debug(`Created default metadata record for existing dataset "${name}"`);
+        this.logger.debug(
+          `Created default metadata record for existing dataset "${name}"`,
+        );
       }
     }
   }
@@ -972,18 +1012,18 @@ export class DatasetsService {
    */
   private entityToMeta(entity: DatasetMetadata): DatasetMeta {
     return {
-      description:       entity.description ?? null,
-      activationToken:   entity.activationToken ?? null,
-      captionType:       entity.captionType,
-      type:              entity.type,
-      resolution:        entity.resolution,
+      description: entity.description ?? null,
+      activationToken: entity.activationToken ?? null,
+      captionType: entity.captionType,
+      type: entity.type,
+      resolution: entity.resolution,
       keep_tokens_count: entity.keep_tokens_count,
-      has_captions:      entity.has_captions,
-      notes:             entity.notes ?? null,
-      tagFrequency:      entity.tagFrequency,
-      total_file_size:   entity.total_file_size,
-      createdAt:         entity.created_at.toISOString(),
-      updatedAt:         entity.updated_at.toISOString(),
+      has_captions: entity.has_captions,
+      notes: entity.notes ?? null,
+      tagFrequency: entity.tagFrequency,
+      total_file_size: entity.total_file_size,
+      createdAt: entity.created_at.toISOString(),
+      updatedAt: entity.updated_at.toISOString(),
     };
   }
 
@@ -998,7 +1038,7 @@ export class DatasetsService {
   computeCaptionStats(text: string): CaptionStats {
     const trimmed = text.trim();
     const charCount = trimmed.length;
-    const wordCount = trimmed === '' ? 0 : trimmed.split(/\s+/).length;
+    const wordCount = trimmed === "" ? 0 : trimmed.split(/\s+/).length;
 
     return {
       charCount,
@@ -1008,16 +1048,18 @@ export class DatasetsService {
     };
   }
 
-  private computeCaptionLengthSummary(stats: CaptionStats[]): CaptionLengthSummary {
+  private computeCaptionLengthSummary(
+    stats: CaptionStats[],
+  ): CaptionLengthSummary {
     const count = stats.length;
     const totalChars = stats.reduce((s, c) => s + c.charCount, 0);
     const totalWords = stats.reduce((s, c) => s + c.wordCount, 0);
 
     return {
       longForClipCount: stats.filter((c) => c.isLongForClip).length,
-      longForT5Count:   stats.filter((c) => c.isLongForT5).length,
-      avgCharCount:     Math.round(totalChars / count),
-      avgWordCount:     Math.round(totalWords / count),
+      longForT5Count: stats.filter((c) => c.isLongForT5).length,
+      avgCharCount: Math.round(totalChars / count),
+      avgWordCount: Math.round(totalWords / count),
     };
   }
 
@@ -1028,11 +1070,11 @@ export class DatasetsService {
   private async detectCaptionTypeFromDir(
     files: string[],
     datasetPath: string,
-  ): Promise<Omit<CaptionTypeDetectionResult, 'meta'>> {
+  ): Promise<Omit<CaptionTypeDetectionResult, "meta">> {
     const captionFiles = files.filter(isCaption);
 
     if (captionFiles.length === 0) {
-      return { captionType: 'unknown', sampleSize: 0, tagListRatio: 0 };
+      return { captionType: "unknown", sampleSize: 0, tagListRatio: 0 };
     }
 
     const sample = captionFiles
@@ -1043,8 +1085,8 @@ export class DatasetsService {
     let tagListCount = 0;
     for (const file of sample) {
       const text = await fs
-        .readFile(path.join(datasetPath, file), 'utf8')
-        .catch(() => '');
+        .readFile(path.join(datasetPath, file), "utf8")
+        .catch(() => "");
       if (this.looksLikeTagList(text)) tagListCount++;
     }
 
@@ -1052,11 +1094,11 @@ export class DatasetsService {
 
     let captionType: CaptionType;
     if (tagListRatio >= TAG_LIST_THRESHOLD) {
-      captionType = 'tag_list';
+      captionType = "tag_list";
     } else if (tagListRatio <= MIXED_THRESHOLD) {
-      captionType = 'natural_language';
+      captionType = "natural_language";
     } else {
-      captionType = 'mixed';
+      captionType = "mixed";
     }
 
     return { captionType, sampleSize: sample.length, tagListRatio };
@@ -1073,7 +1115,10 @@ export class DatasetsService {
     const commaCount = (trimmed.match(/,/g) ?? []).length;
     if (commaCount < 2) return false;
 
-    const tokens = trimmed.split(',').map((t) => t.trim()).filter(Boolean);
+    const tokens = trimmed
+      .split(",")
+      .map((t) => t.trim())
+      .filter(Boolean);
     const avgLen = tokens.reduce((sum, t) => sum + t.length, 0) / tokens.length;
     const sentenceEndings = (trimmed.match(/[.!?]/g) ?? []).length;
 
@@ -1090,14 +1135,18 @@ export class DatasetsService {
     mode: PrependMode,
   ): string {
     switch (mode) {
-      case 'tag_list':
+      case "tag_list":
         return existing ? `${token}, ${existing}` : token;
-      case 'nl_prefix':
+      case "nl_prefix":
         return existing ? `${token}. ${existing}` : token;
-      case 'nl_style':
-        return existing ? `In style of ${token}, ${existing}` : `In style of ${token}`;
-      case 'nl_character':
-        return existing ? `${token} character, ${existing}` : `${token} character`;
+      case "nl_style":
+        return existing
+          ? `In style of ${token}, ${existing}`
+          : `In style of ${token}`;
+      case "nl_character":
+        return existing
+          ? `${token} character, ${existing}`
+          : `${token} character`;
       default: {
         //const _exhaustive: never = mode;
         return existing;
